@@ -414,6 +414,11 @@ def main():
     host = os.environ.get("AI_TEAM_HOST", "127.0.0.1")
     port = int(os.environ.get("AI_TEAM_PORT", "8123"))
 
+    # 启动前健康检查
+    from health_check import preflight_check
+    if not preflight_check(port=port):
+        sys.exit(1)
+
     server = HTTPServer((host, port), TeamHTTPHandler)
 
     print(f"╔══════════════════════════════════════════╗")

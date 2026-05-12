@@ -1,0 +1,29 @@
+# providers.yaml — 模型提供商配置
+# =====================================
+# 切换模型：修改 active_provider 即可，不需要改代码。
+# 支持：deepseek | claude | openai | gemini | any
+
+active_provider: deepseek
+
+default_timeout: 180
+
+# Token 单价（美元/1K tokens，仅供参考）
+provider_cost_per_1k:
+  deepseek:
+    input: 0.002
+    output: 0.008
+  claude:
+    input: 0.003
+    output: 0.015
+  openai:
+    input: 0.005
+    output: 0.015
+  gemini:
+    input: 0.00125
+    output: 0.005
+  any:
+    input: 0.002
+    output: 0.008
+
+# Prompt Caching（Claude 需要显式标记）
+enable_prompt_caching: true

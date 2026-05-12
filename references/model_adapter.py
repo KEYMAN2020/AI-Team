@@ -37,17 +37,36 @@ logger = logging.getLogger("model_adapter")
 # 工具注册表（角色绑定的工具列表）
 from tools_registry import get_tools_for_role, execute_tool, build_tools_prompt
 
+# 熔断器（防止 API key 失效时无限重试烧 Token）
+from circuit_breaker import get_breaker
+
+# YAML 配置加载器（优先从 config/ 加载，硬编码作为 fallback）
+try:
+    from config_loader import (
+        get_active_provider as _get_active_provider,
+        get_provider_cost as _get_provider_cost,
+        get_role_configs as _get_role_configs,
+        get_enable_prompt_caching as _get_enable_prompt_caching,
+        get_default_timeout as _get_default_timeout,
+    )
+except ImportError:
+    _get_active_provider = None
+    _get_provider_cost = None
+    _get_role_configs = None
+    _get_enable_prompt_caching = None
+    _get_default_timeout = None
+
 # ═══════════════════════════════════════════════════
-# ★ 唯一需要改的地方：切换模型提供商
+# ★ 切换模型提供商（优先从 config/providers.yaml 读取）
 # ═══════════════════════════════════════════════════
-ACTIVE_PROVIDER = "deepseek"   # "deepseek" | "claude" | "openai" | "gemini" | "any"
+ACTIVE_PROVIDER = _get_active_provider("deepseek") if _get_active_provider else "deepseek"
 
 # 默认超时（秒），角色级别可在 ROLE_CONFIGS 中覆盖
-DEFAULT_TIMEOUT = 180
+DEFAULT_TIMEOUT = _get_default_timeout(180) if _get_default_timeout else 180
 
 # Prompt Caching：重复的 system prompt 自动缓存，减少 token 费用
 # Claude 需要显式标记，OpenAI/GPT-4o 自动生效无需配置
-ENABLE_PROMPT_CACHING = True
+ENABLE_PROMPT_CACHING = _get_enable_prompt_caching(True) if _get_enable_prompt_caching else True
 
 
 # ═══════════════════════════════════════════════════
@@ -135,6 +154,19 @@ ROLE_CONFIGS = {
     },
 }
 
+# ── 如果 config/roles.yaml 存在，用它覆盖硬编码配置 ──
+if _get_role_configs:
+    try:
+        _yaml_roles = _get_role_configs()
+        if _yaml_roles:
+            for _provider, _roles in _yaml_roles.items():
+                if _provider in ROLE_CONFIGS:
+                    ROLE_CONFIGS[_provider].update(_roles)
+                else:
+                    ROLE_CONFIGS[_provider] = _roles
+    except Exception:
+        pass  # YAML 加载失败，保持硬编码值
+
 
 # ═══════════════════════════════════════════════════
 # Token 用量追踪
@@ -151,6 +183,15 @@ PROVIDER_COST_PER_1K = {
     "gemini":     {"input": 0.00125, "output": 0.005},
     "any":        {"input": 0.002,  "output": 0.008},
 }
+
+# ── 如果 config/providers.yaml 有价格数据，覆盖 ──
+if _get_provider_cost:
+    try:
+        _yaml_costs = _get_provider_cost()
+        if _yaml_costs:
+            PROVIDER_COST_PER_1K.update(_yaml_costs)
+    except Exception:
+        pass
 
 def record_usage(role: str, provider: str, model: str,
                  prompt_tokens: int, completion_tokens: int) -> None:
@@ -238,19 +279,33 @@ def call_role(role: str, system_prompt: str, user_message: str,
     统一调用入口，自动携带该角色的工具列表。
         output = call_role("frontend", system_prompt, context)
     """
+    # 熔断器检查：如果已打开，直接拒绝，不发 HTTP 请求
+    breaker = get_breaker()
+    if breaker.is_open():
+        raise RuntimeError(
+            f"API 调用被熔断器拒绝（角色={role}）。\n"
+            + breaker.reason()
+        )
+
     p   = provider or ACTIVE_PROVIDER
     cfg = ROLE_CONFIGS.get(p, {}).get(role, {"model": "gpt-4o", "temperature": 0.7})
 
-    if p == "deepseek":
-        return _call_deepseek(system_prompt, user_message, cfg, role)
-    elif p == "claude":
-        return _call_claude(system_prompt, user_message, cfg, role)
-    elif p == "openai":
-        return _call_openai(system_prompt, user_message, cfg, role)
-    elif p == "gemini":
-        return _call_gemini(system_prompt, user_message, cfg, role)
-    else:
-        return _call_openai_compat(system_prompt, user_message, cfg, role)
+    try:
+        if p == "deepseek":
+            result = _call_deepseek(system_prompt, user_message, cfg, role)
+        elif p == "claude":
+            result = _call_claude(system_prompt, user_message, cfg, role)
+        elif p == "openai":
+            result = _call_openai(system_prompt, user_message, cfg, role)
+        elif p == "gemini":
+            result = _call_gemini(system_prompt, user_message, cfg, role)
+        else:
+            result = _call_openai_compat(system_prompt, user_message, cfg, role)
+        breaker.record_success()
+        return result
+    except Exception as e:
+        breaker.record_failure(role, str(e))
+        raise
 
 
 # ═══════════════════════════════════════════════════

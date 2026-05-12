@@ -1,0 +1,43 @@
+# workflow.yaml — 工作流配置
+# ==============================
+# DAG 执行、重试、超时、审批等全局参数。
+
+# 默认超时（秒），角色级别可在 roles.yaml 中覆盖
+default_timeout: 180
+
+# 失败重试次数
+default_retries: 2
+
+# 单次执行最多处理几个 sub_requests
+max_sub_requests: 3
+
+# sub_request 最大递归深度（防无限嵌套）
+max_sub_request_depth: 2
+
+# QA→DBG→QA 最多循环次数
+qa_dbg_max_iter: 3
+
+# 自动批准（CI/测试场景跳过人工审批）
+auto_approve: false
+
+# 有效的角色名集合（含审批虚拟节点）
+valid_roles:
+  - pm
+  - product
+  - architect
+  - ux
+  - dba
+  - frontend
+  - backend
+  - reviewer
+  - devops
+  - debug
+  - tester
+  - _approval
+
+# 上下文截断上限（字符数，约 6000 tokens）
+max_context_chars: 24000
+
+# 默认 DAG 定义（不在这里重复，保留在 runner.py _extract_dag fallback 中）
+# 如需自定义默认流程，在下方按相同格式定义
+# default_dag: []

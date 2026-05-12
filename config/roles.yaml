@@ -1,0 +1,263 @@
+# roles.yaml — 11 个角色的模型/温度/超时配置
+# ================================================
+# 每个 provider 下的角色独立配置。
+# 角色缩写：
+#   pm, product, architect, ux, dba,
+#   frontend, backend, reviewer, devops, debug, tester
+
+deepseek:
+  pm:
+    model: deepseek-v4-pro
+    temperature: 0.3
+    thinking: true
+    timeout: 120
+  product:
+    model: deepseek-v4-pro
+    temperature: 0.5
+    thinking: false
+    timeout: 90
+  architect:
+    model: deepseek-v4-pro
+    temperature: 0.3
+    thinking: true
+    timeout: 120
+  ux:
+    model: deepseek-v4-flash
+    temperature: 0.7
+    thinking: false
+    timeout: 90
+  dba:
+    model: deepseek-v4-pro
+    temperature: 0.1
+    thinking: true
+    timeout: 300
+  frontend:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  backend:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  reviewer:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: true
+    timeout: 120
+  devops:
+    model: deepseek-v4-flash
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  debug:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: true
+    timeout: 300
+  tester:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+
+claude:
+  pm:
+    model: claude-opus-4-20250514
+    temperature: 0.3
+    thinking: true
+    budget: 2000
+    timeout: 120
+  product:
+    model: claude-sonnet-4-20250514
+    temperature: 0.5
+    thinking: false
+    timeout: 90
+  architect:
+    model: claude-opus-4-20250514
+    temperature: 0.3
+    thinking: true
+    budget: 2000
+    timeout: 120
+  ux:
+    model: claude-sonnet-4-20250514
+    temperature: 0.7
+    thinking: false
+    timeout: 90
+  dba:
+    model: claude-opus-4-20250514
+    temperature: 0.1
+    thinking: true
+    budget: 1500
+    timeout: 300
+  frontend:
+    model: claude-sonnet-4-20250514
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  backend:
+    model: claude-sonnet-4-20250514
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  reviewer:
+    model: claude-opus-4-20250514
+    temperature: 0.0
+    thinking: true
+    budget: 2000
+    timeout: 120
+  devops:
+    model: claude-sonnet-4-20250514
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  debug:
+    model: claude-opus-4-20250514
+    temperature: 0.0
+    thinking: true
+    budget: 2000
+    timeout: 300
+  tester:
+    model: claude-sonnet-4-20250514
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+
+openai:
+  pm:
+    model: o1
+    temperature: 1.0
+    timeout: 120
+  product:
+    model: gpt-4o
+    temperature: 0.5
+    timeout: 90
+  architect:
+    model: o1
+    temperature: 1.0
+    timeout: 120
+  ux:
+    model: gpt-4o
+    temperature: 0.7
+    timeout: 90
+  dba:
+    model: gpt-4o
+    temperature: 0.1
+    timeout: 300
+  frontend:
+    model: gpt-4o
+    temperature: 0.2
+    timeout: 300
+  backend:
+    model: gpt-4o
+    temperature: 0.2
+    timeout: 300
+  reviewer:
+    model: gpt-4o
+    temperature: 0.0
+    timeout: 120
+  devops:
+    model: gpt-4o
+    temperature: 0.2
+    timeout: 300
+  debug:
+    model: o1
+    temperature: 1.0
+    timeout: 300
+  tester:
+    model: gpt-4o
+    temperature: 0.2
+    timeout: 300
+
+gemini:
+  pm:
+    model: gemini-2.0-flash-thinking-exp
+    temperature: 0.3
+    timeout: 120
+  product:
+    model: gemini-2.0-flash
+    temperature: 0.5
+    timeout: 90
+  architect:
+    model: gemini-2.0-flash-thinking-exp
+    temperature: 0.3
+    timeout: 120
+  ux:
+    model: gemini-2.0-flash
+    temperature: 0.7
+    timeout: 90
+  dba:
+    model: gemini-2.0-flash-thinking-exp
+    temperature: 0.1
+    timeout: 300
+  frontend:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 300
+  backend:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 300
+  reviewer:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 120
+  devops:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 300
+  debug:
+    model: gemini-2.0-flash-thinking-exp
+    temperature: 0.0
+    timeout: 300
+  tester:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 300
+
+any:
+  pm:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.3
+    timeout: 120
+  product:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.5
+    timeout: 90
+  architect:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.3
+    timeout: 120
+  ux:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.7
+    timeout: 90
+  dba:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.1
+    timeout: 300
+  frontend:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.2
+    timeout: 300
+  backend:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.2
+    timeout: 300
+  reviewer:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.0
+    timeout: 120
+  devops:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.2
+    timeout: 300
+  debug:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.0
+    timeout: 300
+  tester:
+    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    temperature: 0.2
+    timeout: 300

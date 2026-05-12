@@ -59,14 +59,20 @@ from state_manager    import (build_context, mark_task_started,
 from knowledge_base    import build_kb_context, init_knowledge_base
 from resource_library  import build_library_context, init_resource_library
 from doc_generator     import generate_all_docs
+from logger            import init_logger, get_logger
 
-# ── 配置 ────────────────────────────────────────────
-DEFAULT_TIMEOUT        = 180   # 单个 Agent 最长等待（秒，角色级别可在 model_adapter 中覆盖）
-DEFAULT_RETRIES        = 2     # 失败重试次数
-MAX_SUB_REQUESTS       = 3     # 单次执行最多处理几个 sub_requests
-MAX_SUB_REQUEST_DEPTH  = 2     # sub_request 最大递归深度（防无限嵌套爆炸）
-QA_DBG_MAX_ITER        = 3     # QA→DBG→QA 最多循环次数
-AUTO_APPROVE           = False # True=跳过所有人工审批（CI/测试场景）
+# ── 配置（优先从 config/workflow.yaml 读取，有硬编码 fallback）─
+try:
+    from config_loader import get_workflow_value as _wcfg
+except ImportError:
+    _wcfg = lambda k, d: d
+
+DEFAULT_TIMEOUT        = _wcfg("default_timeout", 180)
+DEFAULT_RETRIES        = _wcfg("default_retries", 2)
+MAX_SUB_REQUESTS       = _wcfg("max_sub_requests", 3)
+MAX_SUB_REQUEST_DEPTH  = _wcfg("max_sub_request_depth", 2)
+QA_DBG_MAX_ITER        = _wcfg("qa_dbg_max_iter", 3)
+AUTO_APPROVE           = _wcfg("auto_approve", False)
 VALID_ROLES            = set(ALL_ROLES) | {"_approval"}  # 合法角色名（含审批虚拟节点）
 
 
@@ -102,6 +108,10 @@ async def run_agent(
     task_id = task_node["id"]
     task    = task_node["task"]
 
+    slog = get_logger()
+    slog.log("info", "task_started", role=role, dispatch_id=task_id,
+             phase="executing", summary=task[:80])
+
     logger.info(f"  → [{task_id}] {role.upper()} 开始：{task[:40]}")
 
     # 收集上游依赖的输出，注入到任务描述
@@ -114,6 +124,9 @@ async def run_agent(
                 timeout=timeout,
             )
             logger.info(f"  ✓ [{task_id}] {role.upper()} 完成")
+
+            slog.log("info", "task_completed", role=role, dispatch_id=task_id,
+                     phase="executing", summary=result.get("summary", "")[:120])
 
             # 把结果发到消息总线（让其他 Agent 可以订阅）
             await bus.post(role, "pm", RESULT,
@@ -134,12 +147,16 @@ async def run_agent(
             logger.warning(f"  ⏱ [{task_id}] {role.upper()} 超时（{timeout}s）"
                            + (f"，第 {attempt+1} 次重试" if attempt < retries else "，放弃"))
             if attempt == retries:
+                slog.log("error", "task_timeout", role=role, dispatch_id=task_id,
+                         phase="executing", error=f"timeout after {timeout}s")
                 return {"id": task_id, "role": role, "status": "timeout", "output": ""}
 
         except Exception as e:
             logger.error(f"  ✗ [{task_id}] {role.upper()} 出错：{e}"
                          + (f"，第 {attempt+1} 次重试" if attempt < retries else ""))
             if attempt == retries:
+                slog.log("error", "task_failed", role=role, dispatch_id=task_id,
+                         phase="executing", error=str(e))
                 return {"id": task_id, "role": role, "status": "error",
                         "output": "", "error": str(e)}
             await asyncio.sleep(2 ** attempt)  # 指数退避
@@ -236,6 +253,10 @@ async def _handle_sub_requests(output: str, requester: str,
         return output
 
     logger.info(f"    ↳ {requester.upper()} 发起 {len(requests)} 个 sub_request")
+    slog = get_logger()
+    slog.log("info", "sub_request_spawned", role=requester, dispatch_id=task_id,
+             phase="executing",
+             summary=f"spawned {len(requests)} sub-requests: {[r.get('to','?') for r in requests]}")
 
     # 并行处理所有 sub_requests（校验目标角色合法性）
     sub_tasks = []
@@ -420,6 +441,20 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
     init_knowledge_base()    # 项目知识库
     init_resource_library()  # 技术知识储备库
 
+    # 初始化结构化日志（用项目名做 project_id）
+    try:
+        proj = get_project()
+        pid = proj.get("name", "").replace(" ", "_")[:40] if proj else ""
+    except Exception:
+        pid = ""
+    if not pid:
+        from datetime import datetime as _dt
+        pid = f"proj_{_dt.now().strftime('%Y%m%d_%H%M')}"
+    init_logger(pid)
+    slog = get_logger()
+    slog.log("info", "project_started", phase="planning",
+             summary=user_task[:120])
+
     # ── Step 1：PM 规划 ──────────────────────────────
     # 检查是否为断点续跑：已有快照则跳过重新规划
     pending_from_crash = _find_completed_tasks_from_snapshots()
@@ -460,6 +495,7 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
             logger.info(_format_dag_preview(dag))
 
     # ── Step 2：并行执行 DAG（断点续跑：跳过已完成 task） ──
+    slog.log("info", "phase_change", phase="executing", summary="DAG 执行开始")
     completed = _find_completed_tasks_from_snapshots()
 
     async def on_tier_done(tier_idx, tier, results):
@@ -526,6 +562,7 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
         logger.warning(f"  [文档] 生成 API 文档失败（非致命）：{e}")
 
     # ── Step 4：PM 整合 ──────────────────────────────
+    slog.log("info", "phase_change", phase="integrating", summary="PM 整合所有结果")
     logger.info("  [PM] 整合所有结果...")
     summaries = "\n".join(
         f"[{r['id']}] {r['role'].upper()}：{r.get('summary','')}"
@@ -555,6 +592,9 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
         for role, data in sorted(usage["by_role"].items()):
             logger.info(f"  {role.upper():<12} {data['calls']} 次调用, {data['tokens']} tokens")
         logger.info(f"{'='*50}\n")
+
+    slog.log("info", "project_completed", phase="done",
+             summary=f"tokens={usage['total_tokens']}, cost=${usage['total_cost_usd']:.4f}, calls={usage['total_calls']}")
 
     return final_output
 
