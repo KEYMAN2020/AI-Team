@@ -47,7 +47,7 @@ AUTO_SECTIONS = {
 
 # 每个角色读取的知识库章节（标注来源类型）
 ROLE_KB_SECTIONS = {
-    # key = (source_type, section)
+    # ══ 硬编码 fallback（role_registry 不可用时使用） ══
     "pm":        [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
     "product":   [("auto", "decisions"), ("curated", "glossary")],
     "architect": [("auto", "decisions"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
@@ -60,6 +60,17 @@ ROLE_KB_SECTIONS = {
     "reviewer":  [("curated", "standards")],
     "tester":    [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
 }
+
+# ── 从 role_registry 覆盖知识库章节（优先） ──
+try:
+    from role_registry import get_role_kb_sections as _get_role_kb_sections, get_all_roles as _get_all_roles
+    for _role in _get_all_roles():
+        _reg_sections = _get_role_kb_sections(_role)
+        if _reg_sections:
+            ROLE_KB_SECTIONS[_role] = _reg_sections
+    del _get_role_kb_sections, _get_all_roles  # 清理模块级变量
+except ImportError:
+    pass
 
 # ── 初始化 ────────────────────────────────────────
 
@@ -116,7 +127,13 @@ def build_kb_context(role: str) -> str:
     为指定角色构建知识库上下文。
     - curated/ 内容不加警告（人类编写）
     - auto/ 内容标注「未经人工审查，仅供参考」
+    自动解析别名。
     """
+    try:
+        from role_registry import resolve_role as _resolve
+        role = _resolve(role) or role
+    except ImportError:
+        pass
     sections = ROLE_KB_SECTIONS.get(role, [])
     if not sections:
         return ""

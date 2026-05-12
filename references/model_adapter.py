@@ -40,6 +40,14 @@ from tools_registry import get_tools_for_role, execute_tool, build_tools_prompt
 # 熔断器（防止 API key 失效时无限重试烧 Token）
 from circuit_breaker import get_breaker
 
+# 角色注册表（单一来源，自动发现 roles/*/config.yaml）
+from role_registry import (
+    get_role_config as _get_role_cfg_from_registry,
+    get_role_configs_all_providers as _get_role_configs_all_providers,
+    get_role_file_map as _get_role_file_map,
+    get_role_prompt as _get_role_prompt,
+)
+
 # YAML 配置加载器（优先从 config/ 加载，硬编码作为 fallback）
 try:
     from config_loader import (
@@ -71,90 +79,18 @@ ENABLE_PROMPT_CACHING = _get_enable_prompt_caching(True) if _get_enable_prompt_c
 
 # ═══════════════════════════════════════════════════
 # 角色 → 模型配置映射
-# 每个 provider 的配置独立，切换 ACTIVE_PROVIDER 自动生效
+# 基础配置来自 roles/*/config.yaml（role_registry），
+# 可由 config/roles.yaml（YAML 覆盖层）覆写。
+# 每个 provider 的配置独立，切换 ACTIVE_PROVIDER 自动生效。
 # ═══════════════════════════════════════════════════
 
-# 角色说明：pm=Tech Lead, architect=架构师, frontend=前端,
-#           backend=后端, devops=DevOps, debug=Debug工程师, tester=测试
-ROLE_CONFIGS = {
+ROLE_CONFIGS = _get_role_configs_all_providers()
+if not ROLE_CONFIGS:
+    logger.warning("ROLE_CONFIGS 为空！role_registry 可能未发现任何角色配置，"
+                   "所有 API 调用将使用硬编码 fallback。")
 
-    # ── DeepSeek V4 ─────────────────────────────────
-    "deepseek": {
-        "pm":       {"model": "deepseek-v4-pro",  "temperature": 0.3, "thinking": True,  "timeout": 120},
-        "product":  {"model": "deepseek-v4-pro",  "temperature": 0.5, "thinking": False, "timeout": 90},
-        "architect":{"model": "deepseek-v4-pro",  "temperature": 0.3, "thinking": True,  "timeout": 120},
-        "ux":       {"model": "deepseek-v4-flash", "temperature": 0.7, "thinking": False, "timeout": 90},
-        "dba":      {"model": "deepseek-v4-pro",  "temperature": 0.1, "thinking": True,  "timeout": 300},
-        "frontend": {"model": "deepseek-v4-pro",  "temperature": 0.0, "thinking": False, "timeout": 300},
-        "backend":  {"model": "deepseek-v4-pro",  "temperature": 0.0, "thinking": False, "timeout": 300},
-        "reviewer": {"model": "deepseek-v4-pro",  "temperature": 0.0, "thinking": True,  "timeout": 120},
-        "devops":   {"model": "deepseek-v4-flash", "temperature": 0.0, "thinking": False, "timeout": 300},
-        "debug":    {"model": "deepseek-v4-pro",  "temperature": 0.0, "thinking": True,  "timeout": 300},
-        "tester":   {"model": "deepseek-v4-pro",  "temperature": 0.0, "thinking": False, "timeout": 300},
-    },
 
-    # ── Claude ──────────────────────────────────────
-    "claude": {
-        "pm":       {"model": "claude-opus-4-20250514",   "temperature": 0.3, "thinking": True,  "budget": 2000, "timeout": 120},
-        "product":  {"model": "claude-sonnet-4-20250514", "temperature": 0.5, "thinking": False, "timeout": 90},
-        "architect":{"model": "claude-opus-4-20250514",   "temperature": 0.3, "thinking": True,  "budget": 2000, "timeout": 120},
-        "ux":       {"model": "claude-sonnet-4-20250514", "temperature": 0.7, "thinking": False, "timeout": 90},
-        "dba":      {"model": "claude-opus-4-20250514",   "temperature": 0.1, "thinking": True,  "budget": 1500, "timeout": 300},
-        "frontend": {"model": "claude-sonnet-4-20250514", "temperature": 0.0, "thinking": False, "timeout": 300},
-        "backend":  {"model": "claude-sonnet-4-20250514", "temperature": 0.0, "thinking": False, "timeout": 300},
-        "reviewer": {"model": "claude-opus-4-20250514",   "temperature": 0.0, "thinking": True,  "budget": 2000, "timeout": 120},
-        "devops":   {"model": "claude-sonnet-4-20250514", "temperature": 0.0, "thinking": False, "timeout": 300},
-        "debug":    {"model": "claude-opus-4-20250514",   "temperature": 0.0, "thinking": True,  "budget": 2000, "timeout": 300},
-        "tester":   {"model": "claude-sonnet-4-20250514", "temperature": 0.0, "thinking": False, "timeout": 300},
-    },
-
-    # ── OpenAI ──────────────────────────────────────
-    "openai": {
-        "pm":       {"model": "o1",     "temperature": 1.0, "timeout": 120},
-        "product":  {"model": "gpt-4o", "temperature": 0.5, "timeout": 90},
-        "architect":{"model": "o1",     "temperature": 1.0, "timeout": 120},
-        "ux":       {"model": "gpt-4o", "temperature": 0.7, "timeout": 90},
-        "dba":      {"model": "gpt-4o", "temperature": 0.1, "timeout": 300},
-        "frontend": {"model": "gpt-4o", "temperature": 0.2, "timeout": 300},
-        "backend":  {"model": "gpt-4o", "temperature": 0.2, "timeout": 300},
-        "reviewer": {"model": "gpt-4o", "temperature": 0.0, "timeout": 120},
-        "devops":   {"model": "gpt-4o", "temperature": 0.2, "timeout": 300},
-        "debug":    {"model": "o1",     "temperature": 1.0, "timeout": 300},
-        "tester":   {"model": "gpt-4o", "temperature": 0.2, "timeout": 300},
-    },
-
-    # ── Gemini ──────────────────────────────────────
-    "gemini": {
-        "pm":       {"model": "gemini-2.0-flash-thinking-exp", "temperature": 0.3, "timeout": 120},
-        "product":  {"model": "gemini-2.0-flash",              "temperature": 0.5, "timeout": 90},
-        "architect":{"model": "gemini-2.0-flash-thinking-exp", "temperature": 0.3, "timeout": 120},
-        "ux":       {"model": "gemini-2.0-flash",              "temperature": 0.7, "timeout": 90},
-        "dba":      {"model": "gemini-2.0-flash-thinking-exp", "temperature": 0.1, "timeout": 300},
-        "frontend": {"model": "gemini-2.0-flash",              "temperature": 0.0, "timeout": 300},
-        "backend":  {"model": "gemini-2.0-flash",              "temperature": 0.0, "timeout": 300},
-        "reviewer": {"model": "gemini-2.0-flash",              "temperature": 0.0, "timeout": 120},
-        "devops":   {"model": "gemini-2.0-flash",              "temperature": 0.0, "timeout": 300},
-        "debug":    {"model": "gemini-2.0-flash-thinking-exp", "temperature": 0.0, "timeout": 300},
-        "tester":   {"model": "gemini-2.0-flash",              "temperature": 0.0, "timeout": 300},
-    },
-
-    # ── 任意兼容 OpenAI 格式的模型 ──────────────────
-    "any": {
-        "pm":       {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.3, "timeout": 120},
-        "product":  {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.5, "timeout": 90},
-        "architect":{"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.3, "timeout": 120},
-        "ux":       {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.7, "timeout": 90},
-        "dba":      {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.1, "timeout": 300},
-        "frontend": {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.2, "timeout": 300},
-        "backend":  {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.2, "timeout": 300},
-        "reviewer": {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.0, "timeout": 120},
-        "devops":   {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.2, "timeout": 300},
-        "debug":    {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.0, "timeout": 300},
-        "tester":   {"model": os.environ.get("AI_TEAM_MODEL", "gpt-4o"), "temperature": 0.2, "timeout": 300},
-    },
-}
-
-# ── 如果 config/roles.yaml 存在，用它覆盖硬编码配置 ──
+# ── 如果 config/roles.yaml 存在，用它覆盖角色注册表配置 ──
 if _get_role_configs:
     try:
         _yaml_roles = _get_role_configs()
@@ -165,8 +101,7 @@ if _get_role_configs:
                 else:
                     ROLE_CONFIGS[_provider] = _roles
     except Exception:
-        pass  # YAML 加载失败，保持硬编码值
-
+        pass  # YAML 加载失败，保持角色注册表配置
 
 # ═══════════════════════════════════════════════════
 # Token 用量追踪
@@ -262,11 +197,11 @@ def compute_usage_summary() -> dict:
 def get_role_timeout(role: str, provider: Optional[str] = None) -> int:
     """
     返回指定角色在当前提供商下的超时时间（秒）。
-    未配置则返回 DEFAULT_TIMEOUT。
+    优先从 role_registry 读取，未配置则返回 DEFAULT_TIMEOUT。
     """
     p = provider or ACTIVE_PROVIDER
-    cfg = ROLE_CONFIGS.get(p, {}).get(role, {})
-    return cfg.get("timeout", DEFAULT_TIMEOUT)
+    cfg = _get_role_cfg_from_registry(role, p, default={})
+    return cfg.get("timeout", DEFAULT_TIMEOUT) if cfg else DEFAULT_TIMEOUT
 
 
 # ═══════════════════════════════════════════════════
@@ -616,36 +551,20 @@ import re
 from pathlib import Path
 
 _ROLES_DIR = Path(__file__).parent / "roles"
-_ROLE_FILE_MAP = {
-    "pm":        "pm.md",
-    "product":   "product.md",
-    "po":        "product.md",
-    "architect": "architect.md",
-    "arch":      "architect.md",
-    "ux":        "ux.md",
-    "dba":       "dba.md",
-    "frontend":  "frontend.md",
-    "fe":        "frontend.md",
-    "backend":   "backend.md",
-    "be":        "backend.md",
-    "reviewer":  "reviewer.md",
-    "cr":        "reviewer.md",
-    "devops":    "devops.md",
-    "ops":       "devops.md",
-    "debug":     "debug.md",
-    "dbg":       "debug.md",
-    "tester":    "tester.md",
-    "qa":        "tester.md",
-}
+
+# 角色名→prompt 文件映射（别名→文件名），从 role_registry 获取
+_ROLE_FILE_MAP = _get_role_file_map()
 
 def load_system_prompt(role: str) -> str:
     """
-    从对应 .md 文件里提取系统提示词，并自动追加该角色的工具使用说明。
+    从角色的 prompt.md 提取系统提示词，并自动追加工具使用说明。
+    支持别名（通过 role_registry 解析）。
     """
-    fp = _ROLES_DIR / _ROLE_FILE_MAP[role]
-    content = fp.read_text(encoding="utf-8")
-    m = re.search(r"```\r?\n([\s\S]+?)\r?\n```", content)
-    prompt = m.group(1).strip() if m else re.sub(r"^#+.*\n", "", content, flags=re.MULTILINE).strip()
+    prompt = _get_role_prompt(role)
+    if not prompt:
+        # 角色不存在或 prompt.md 缺失
+        logger.warning("无法加载角色 %s 的系统提示词", role)
+        return ""
     # 自动追加工具说明（各角色不同）
     tools_prompt = build_tools_prompt(role)
     return prompt + tools_prompt if tools_prompt else prompt

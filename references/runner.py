@@ -62,6 +62,7 @@ from knowledge_base    import build_kb_context, init_knowledge_base
 from resource_library  import build_library_context, init_resource_library
 from doc_generator     import generate_all_docs
 from logger            import init_logger, get_logger
+from role_registry     import get_all_roles as _get_all_roles_from_registry
 
 # ── 配置（优先从 config/workflow.yaml 读取，有硬编码 fallback）─
 try:
@@ -75,12 +76,12 @@ MAX_SUB_REQUESTS       = _wcfg("max_sub_requests", 3)
 MAX_SUB_REQUEST_DEPTH  = _wcfg("max_sub_request_depth", 2)
 QA_DBG_MAX_ITER        = _wcfg("qa_dbg_max_iter", 3)
 AUTO_APPROVE           = _wcfg("auto_approve", False)
-# YAML 中可配置 valid_roles 列表，亦可使用默认（ALL_ROLES + _approval）
+# YAML 中可配置 valid_roles 列表，亦可使用默认（来自 role_registry）
 _yaml_roles = _wcfg("valid_roles", None)
 if _yaml_roles:
     VALID_ROLES = set(_yaml_roles)
 else:
-    VALID_ROLES = set(ALL_ROLES) | {"_approval"}
+    VALID_ROLES = set(_get_all_roles_from_registry()) | {"_approval"}
 
 
 # ═══════════════════════════════════════════════════

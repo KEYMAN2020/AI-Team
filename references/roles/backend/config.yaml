@@ -1,0 +1,50 @@
+# 角色配置 — 自动生成
+name: backend
+description: 后端开发 — API实现、业务逻辑、数据持久化
+aliases:
+- be
+model_config:
+  deepseek:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  claude:
+    model: claude-sonnet-4-20250514
+    temperature: 0.0
+    thinking: false
+    timeout: 300
+  openai:
+    model: gpt-4o
+    temperature: 0.2
+    timeout: 300
+  gemini:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 300
+  any:
+    model: gpt-4o
+    temperature: 0.2
+    timeout: 300
+tools:
+- web_search
+- code_run
+- bash
+- file_read
+- file_write
+- resource_search
+- api_doc_update
+kb_sections:
+- source: curated
+  section: standards
+- source: curated
+  section: gotchas
+- source: auto
+  section: gotchas
+- source: auto
+  section: decisions
+resource_categories:
+- backend
+- database
+- security
+- testing

@@ -1,0 +1,38 @@
+# 角色配置 — 自动生成
+name: product
+description: 产品经理 — 用户故事、验收标准、产品策略
+aliases:
+- po
+model_config:
+  deepseek:
+    model: deepseek-v4-pro
+    temperature: 0.5
+    thinking: false
+    timeout: 90
+  claude:
+    model: claude-sonnet-4-20250514
+    temperature: 0.5
+    thinking: false
+    timeout: 90
+  openai:
+    model: gpt-4o
+    temperature: 0.5
+    timeout: 90
+  gemini:
+    model: gemini-2.0-flash
+    temperature: 0.5
+    timeout: 90
+  any:
+    model: gpt-4o
+    temperature: 0.5
+    timeout: 90
+tools:
+- web_search
+- file_read
+- file_write
+kb_sections:
+- source: auto
+  section: decisions
+- source: curated
+  section: glossary
+resource_categories: []

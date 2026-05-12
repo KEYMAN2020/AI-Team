@@ -1,0 +1,43 @@
+# 角色配置 — 自动生成
+name: reviewer
+description: 代码审查 — 安全审计、代码质量、最佳实践检查
+aliases:
+- cr
+model_config:
+  deepseek:
+    model: deepseek-v4-pro
+    temperature: 0.0
+    thinking: true
+    timeout: 120
+  claude:
+    model: claude-opus-4-20250514
+    temperature: 0.0
+    thinking: true
+    budget: 2000
+    timeout: 120
+  openai:
+    model: gpt-4o
+    temperature: 0.0
+    timeout: 120
+  gemini:
+    model: gemini-2.0-flash
+    temperature: 0.0
+    timeout: 120
+  any:
+    model: gpt-4o
+    temperature: 0.0
+    timeout: 120
+tools:
+- file_read
+- diff_view
+- web_search
+- resource_search
+- file_write
+kb_sections:
+- source: curated
+  section: standards
+resource_categories:
+- security
+- backend
+- frontend
+- testing

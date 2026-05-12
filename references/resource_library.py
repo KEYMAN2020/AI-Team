@@ -25,6 +25,7 @@ from typing import Optional
 LIB_DIR = Path("resource_library")
 
 CATEGORY_MAP = {
+    # ══ 硬编码 fallback（role_registry 不可用时使用） ══
     "pm":        ["architecture"],
     "product":   [],
     "architect": ["architecture", "backend", "database", "security"],
@@ -37,6 +38,17 @@ CATEGORY_MAP = {
     "debug":     ["backend", "frontend", "database"],
     "tester":    ["testing"],
 }
+
+# ── 从 role_registry 覆盖资源分类（优先） ──
+try:
+    from role_registry import get_role_resource_cats as _get_role_resource_cats, get_all_roles as _get_all_roles
+    for _role in _get_all_roles():
+        _reg_cats = _get_role_resource_cats(_role)
+        if _reg_cats:
+            CATEGORY_MAP[_role] = _reg_cats
+    del _get_role_resource_cats, _get_all_roles  # 清理模块级变量
+except ImportError:
+    pass
 
 
 # ── 初始化（预加载通用知识）────────────────────────
@@ -124,7 +136,13 @@ def build_library_context(role: str, task: str = "") -> str:
     """
     为角色构建知识库上下文注入内容。
     如果有具体任务描述，做关键词搜索；否则返回角色相关分类的摘要。
+    自动解析别名。
     """
+    try:
+        from role_registry import resolve_role as _resolve
+        role = _resolve(role) or role
+    except ImportError:
+        pass
     categories = CATEGORY_MAP.get(role, [])
     if not categories:
         return ""

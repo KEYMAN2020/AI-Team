@@ -66,23 +66,22 @@ def preflight_check(port: int = 8123) -> bool:
 
 
 def _check_role_files():
-    """检查 11 个角色 .md 文件是否存在。"""
-    roles_dir = REFERENCES_DIR / "roles"
-    from model_adapter import _ROLE_FILE_MAP
+    """检查角色目录下的 prompt.md 文件是否存在。"""
+    from role_registry import get_role_prompt, get_all_roles
 
-    # 去重（短别名指向同一文件）
-    seen = set()
+    roles = get_all_roles()
+    if not roles:
+        return False, "未发现任何角色配置（roles/*/config.yaml）"
+
     missing = []
-    for role, filename in _ROLE_FILE_MAP.items():
-        if filename not in seen:
-            seen.add(filename)
-            fp = roles_dir / filename
-            if not fp.exists():
-                missing.append(filename)
+    for role in roles:
+        prompt = get_role_prompt(role)
+        if not prompt:
+            missing.append(f"{role}/prompt.md")
 
     if missing:
         return False, f"缺少角色文件：{', '.join(missing)}"
-    return True, f"共 {len(seen)} 个角色文件"
+    return True, f"共 {len(roles)} 个角色文件"
 
 def _check_api_key():
     """检查当前 provider 的 API Key 环境变量。"""

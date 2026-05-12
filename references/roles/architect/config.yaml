@@ -1,0 +1,50 @@
+# 角色配置 — 自动生成
+name: architect
+description: 架构师 — 系统架构设计、技术选型、接口定义
+aliases:
+- arch
+model_config:
+  deepseek:
+    model: deepseek-v4-pro
+    temperature: 0.3
+    thinking: true
+    timeout: 120
+  claude:
+    model: claude-opus-4-20250514
+    temperature: 0.3
+    thinking: true
+    budget: 2000
+    timeout: 120
+  openai:
+    model: o1
+    temperature: 1.0
+    timeout: 120
+  gemini:
+    model: gemini-2.0-flash-thinking-exp
+    temperature: 0.3
+    timeout: 120
+  any:
+    model: gpt-4o
+    temperature: 0.3
+    timeout: 120
+tools:
+- web_search
+- file_read
+- file_write
+- code_run
+- resource_search
+- api_doc_update
+kb_sections:
+- source: auto
+  section: decisions
+- source: curated
+  section: standards
+- source: curated
+  section: gotchas
+- source: auto
+  section: gotchas
+resource_categories:
+- architecture
+- backend
+- database
+- security

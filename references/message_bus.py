@@ -32,7 +32,16 @@ RESULT  = "result"
 REQUEST = "request"
 INFO    = "info"
 
-ALL_ROLES = ["pm", "product", "architect", "ux", "dba", "frontend", "backend", "reviewer", "devops", "debug", "tester"]
+ALL_ROLES = ["pm", "product", "architect", "ux", "dba", "frontend", "backend", "reviewer", "devops", "debug", "tester", "_approval"]
+
+# ── 从 role_registry 获取角色列表（优先），始终保留 _approval ──
+try:
+    from role_registry import get_all_roles as _get_all_roles
+    _reg_roles = _get_all_roles()
+    if _reg_roles:
+        ALL_ROLES = _reg_roles + ["_approval"]
+except ImportError:
+    pass
 
 
 class MessageBus:

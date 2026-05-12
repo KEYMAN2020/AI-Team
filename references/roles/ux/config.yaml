@@ -1,0 +1,38 @@
+# 角色配置 — 自动生成
+name: ux
+description: UX设计师 — 交互流程、设计规格、无障碍标准
+aliases: []
+model_config:
+  deepseek:
+    model: deepseek-v4-flash
+    temperature: 0.7
+    thinking: false
+    timeout: 90
+  claude:
+    model: claude-sonnet-4-20250514
+    temperature: 0.7
+    thinking: false
+    timeout: 90
+  openai:
+    model: gpt-4o
+    temperature: 0.7
+    timeout: 90
+  gemini:
+    model: gemini-2.0-flash
+    temperature: 0.7
+    timeout: 90
+  any:
+    model: gpt-4o
+    temperature: 0.7
+    timeout: 90
+tools:
+- web_search
+- file_read
+- file_write
+kb_sections:
+- source: curated
+  section: standards
+- source: curated
+  section: glossary
+resource_categories:
+- frontend

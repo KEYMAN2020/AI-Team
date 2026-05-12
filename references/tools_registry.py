@@ -150,88 +150,30 @@ TOOL_DEFS = {
 # ════════════════════════════════════════════════════
 
 ROLE_TOOLS = {
-    "pm": [
-        "web_search",
-        "resource_search",  # 查项目管理、团队协作最佳实践
-        "file_read",        # 读需求和已有的设计文档
-        "file_write",       # 保存 DAG 计划和交付报告
-    ],
-    "product": [
-        "web_search",   # 查竞品、用户研究资料
-        "file_read",    # 读已有需求文档
-        "file_write",   # 保存用户故事
-    ],
-    "architect": [
-        "web_search",
-        "file_read",
-        "file_write",       # 保存架构设计文档（outputs/architecture.md）
-        "code_run",
-        "resource_search",  # 查架构模式和最佳实践
-        "api_doc_update",   # 记录接口定义
-    ],
-    "ux": [
-        "web_search",   # 查 UX 规范、设计模式、无障碍标准
-        "file_read",    # 读需求文档
-        "file_write",   # 保存设计规格
-    ],
-    "dba": [
-        "code_run",     # 执行 SQL 验证
-        "bash",         # 连接数据库、运行 migration
-        "file_read",    # 读现有 schema
-        "file_write",   # 保存 SQL 脚本
-        "web_search",   # 查数据库优化文档
-        "resource_search",  # 查 DB 设计模式和索引策略
-    ],
-    "frontend": [
-        "web_search",
-        "resource_search",
-        "code_run",
-        "file_read",
-        "file_write",
-    ],
-    "backend": [
-        "web_search",
-        "code_run",
-        "bash",
-        "file_read",
-        "file_write",
-        "resource_search",  # 查后端最佳实践
-        "api_doc_update",   # 补充接口实现细节
-    ],
-    "reviewer": [
-        "file_read",        # 读待审查的代码
-        "diff_view",        # 对比代码差异
-        "web_search",       # 查安全漏洞库、最佳实践
-        "resource_search",  # 查安全审查清单和代码规范
-        "file_write",       # 保存审查报告
-    ],
-    "devops": [
-        "bash",
-        "file_read",
-        "file_write",
-        "web_search",
-        "code_run",         # 测试部署脚本
-        "resource_search",  # 查 CI/CD 模式和部署最佳实践
-    ],
-    "debug": [
-        "code_run",
-        "bash",
-        "file_read",
-        "file_write",
-        "diff_view",
-        "web_search",
-        "resource_search",  # 查调试技术和性能优化模式
-    ],
-    "tester": [
-        "web_search",       # 查测试策略、边界用例和工具文档
-        "resource_search",  # 查测试模式和 QA 最佳实践
-        "code_run",
-        "bash",
-        "file_read",
-        "file_write",
-        "diff_view",
-    ],
+    # ══ 硬编码 fallback（role_registry 不可用时使用） ══
+    "pm":        ["web_search", "resource_search", "file_read", "file_write"],
+    "product":   ["web_search", "file_read", "file_write"],
+    "architect": ["web_search", "file_read", "file_write", "code_run", "resource_search", "api_doc_update"],
+    "ux":        ["web_search", "file_read", "file_write"],
+    "dba":       ["code_run", "bash", "file_read", "file_write", "web_search", "resource_search"],
+    "frontend":  ["web_search", "resource_search", "code_run", "file_read", "file_write"],
+    "backend":   ["web_search", "code_run", "bash", "file_read", "file_write", "resource_search", "api_doc_update"],
+    "reviewer":  ["file_read", "diff_view", "web_search", "resource_search", "file_write"],
+    "devops":    ["bash", "file_read", "file_write", "web_search", "code_run", "resource_search"],
+    "debug":     ["code_run", "bash", "file_read", "file_write", "diff_view", "web_search", "resource_search"],
+    "tester":    ["web_search", "resource_search", "code_run", "bash", "file_read", "file_write", "diff_view"],
 }
+
+# ── 从 role_registry 覆盖角色工具（优先） ──
+try:
+    from role_registry import get_role_tools as _get_role_tools, get_all_roles as _get_all_roles
+    for _role in _get_all_roles():
+        _reg_tools = _get_role_tools(_role)
+        if _reg_tools:
+            ROLE_TOOLS[_role] = _reg_tools
+    del _get_role_tools, _get_all_roles  # 清理模块级变量
+except ImportError:
+    pass
 
 
 # ════════════════════════════════════════════════════
@@ -239,12 +181,22 @@ ROLE_TOOLS = {
 # ════════════════════════════════════════════════════
 
 def get_tools_for_role(role: str) -> list[dict]:
-    """返回该角色的工具定义列表（OpenAI/Anthropic 格式）。"""
+    """返回该角色的工具定义列表（OpenAI/Anthropic 格式）。自动解析别名。"""
+    try:
+        from role_registry import resolve_role as _resolve
+        role = _resolve(role) or role
+    except ImportError:
+        pass
     tool_names = ROLE_TOOLS.get(role, [])
     return [TOOL_DEFS[name] for name in tool_names if name in TOOL_DEFS]
 
 def get_tool_names_for_role(role: str) -> list[str]:
-    """返回该角色的工具名称列表。"""
+    """返回该角色的工具名称列表。自动解析别名。"""
+    try:
+        from role_registry import resolve_role as _resolve
+        role = _resolve(role) or role
+    except ImportError:
+        pass
     return ROLE_TOOLS.get(role, [])
 
 
