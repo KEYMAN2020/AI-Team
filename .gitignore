@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 项目运行时数据
+state/
+outputs/
+knowledge/
+*.log
+
+# 环境配置（含密钥）
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db

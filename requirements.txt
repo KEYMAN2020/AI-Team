@@ -1,0 +1,10 @@
+# AI 开发团队 — Python 依赖
+# 按需安装，只用哪个模型就装哪个
+
+# 模型 API（至少选一个）
+anthropic>=0.30.0       # Claude
+openai>=1.0.0           # OpenAI / DeepSeek / 兼容 OpenAI 的本地模型
+google-genai>=1.0.0     # Google Gemini
+
+# 工具
+pyyaml>=6.0             # OpenAPI 文档生成（可选，doc_generator.py 用）
