@@ -52,10 +52,15 @@ class CircuitBreaker:
             if len(self._failures) >= self.max_failures:
                 self._write_flag(role, error)
 
-    def record_success(self):
-        """记录一次成功，重置失败计数窗口。"""
+    def record_success(self, role: str = ""):
+        """记录一次成功，只清该角色的失败记录（不影响其他角色）。"""
         with self._lock:
-            self._failures.clear()
+            if role:
+                self._failures = deque(
+                    (ts, r, err) for ts, r, err in self._failures if r != role
+                )
+            else:
+                self._failures.clear()
 
     def is_open(self) -> bool:
         """检查熔断器是否打开（任何后续调用应立即拒绝）。"""
@@ -110,14 +115,15 @@ class CircuitBreaker:
             return ""
         try:
             data = json.loads(self.flag_file.read_text(encoding="utf-8"))
+            fail_count = len(data.get("recent_failures", []))
             return (
                 f"熔断器已触发 — {data.get('trigger_role','?')} "
-                f"角色连续失败 {data.get('recent_failures',[])} 次，"
+                f"角色连续失败 {fail_count} 次，"
                 f"最后错误：{data.get('last_error','')[:200]}。"
                 f"请检查 API key 或网络后删除 {self.flag_file} 恢复。"
             )
-        except Exception:
-            return f"熔断器已触发，请检查 {self.flag_file}"
+        except Exception as e:
+            return f"熔断器已触发，请检查 {self.flag_file}（读取原因失败：{e}）"
 
 
 # ── 全局单例 ──────────────────────────────────────

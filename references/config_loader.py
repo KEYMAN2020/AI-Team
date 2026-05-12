@@ -15,6 +15,7 @@ config_loader.py — YAML 配置加载器
 
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,7 @@ _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 # ── 缓存 ───────────────────────────────────────────
 
 _cache: dict = {}
+_cache_lock = threading.Lock()
 
 # ── 环境变量展开 ───────────────────────────────────
 
@@ -46,14 +48,15 @@ def _expand_env(value):
 # ── YAML 加载 ──────────────────────────────────────
 
 def _load_yaml(filename: str) -> dict:
-    """加载 config/ 目录下的 YAML 文件（带缓存）。"""
-    if filename in _cache:
-        return _cache[filename]
+    """加载 config/ 目录下的 YAML 文件（带缓存，线程安全）。"""
+    with _cache_lock:
+        if filename in _cache:
+            return _cache[filename]
 
-    filepath = _CONFIG_DIR / filename
-    if not filepath.exists():
-        _cache[filename] = {}
-        return {}
+        filepath = _CONFIG_DIR / filename
+        if not filepath.exists():
+            _cache[filename] = {}
+            return {}
 
     try:
         import yaml
@@ -73,12 +76,14 @@ def _load_yaml(filename: str) -> dict:
     except Exception as e:
         import logging
         logging.getLogger("config_loader").warning("加载配置 %s 失败: %s", filename, e)
-        _cache[filename] = {}
+        with _cache_lock:
+            _cache[filename] = {}
         return {}
 
     # 展开环境变量
     expanded = _expand_env(data)
-    _cache[filename] = expanded
+    with _cache_lock:
+        _cache[filename] = expanded
     return expanded
 
 

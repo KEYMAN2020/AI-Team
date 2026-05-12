@@ -210,6 +210,7 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
         # 阶段一：用户确认已看到，开始审查
         if data.get("status") == "reviewing":
             ack_file = os.path.join(PROJECT_ROOT, "state", "_approval_ack.json")
+            os.makedirs(os.path.dirname(ack_file), exist_ok=True)
             with open(ack_file, "w", encoding="utf-8") as f:
                 json.dump({
                     "acknowledged": True,
@@ -229,6 +230,7 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
 
         # 将审批结果写入一个临时文件，runner.py 的 _request_human_approval 会读取
         approval_file = os.path.join(PROJECT_ROOT, "state", "_approval_response.json")
+        os.makedirs(os.path.dirname(approval_file), exist_ok=True)
         with open(approval_file, "w", encoding="utf-8") as f:
             json.dump({
                 "approved": approved,
@@ -265,6 +267,7 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
         # 阶段一：确认审查
         if data.get("status") == "reviewing":
             ack_file = os.path.join(state_dir, "_dag_approval_ack.json")
+            os.makedirs(os.path.dirname(ack_file), exist_ok=True)
             with open(ack_file, "w", encoding="utf-8") as f:
                 json.dump({
                     "acknowledged": True,
@@ -282,6 +285,7 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
 
         notes = data.get("notes", "")
         dec_file = os.path.join(state_dir, "_dag_approval_response.json")
+        os.makedirs(os.path.dirname(dec_file), exist_ok=True)
         with open(dec_file, "w", encoding="utf-8") as f:
             json.dump({
                 "approved": approved,
@@ -329,8 +333,6 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
     try:
         from state_manager import init_project, MASTER_PATH, get_project
         from runner import run_project
-
-        os.chdir(PROJECT_ROOT)
 
         # 断点续跑检测：如果 master.json 存在且项目未完成，直接恢复
         if MASTER_PATH.exists():

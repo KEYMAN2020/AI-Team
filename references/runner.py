@@ -49,6 +49,8 @@ logger = logging.getLogger("runner")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # ai-team/
+
 from message_bus import MessageBus, get_bus, TASK, RESULT, REQUEST, INFO, ALL_ROLES
 from model_adapter import (call_role, load_system_prompt,
                             get_role_timeout,
@@ -73,7 +75,12 @@ MAX_SUB_REQUESTS       = _wcfg("max_sub_requests", 3)
 MAX_SUB_REQUEST_DEPTH  = _wcfg("max_sub_request_depth", 2)
 QA_DBG_MAX_ITER        = _wcfg("qa_dbg_max_iter", 3)
 AUTO_APPROVE           = _wcfg("auto_approve", False)
-VALID_ROLES            = set(ALL_ROLES) | {"_approval"}  # 合法角色名（含审批虚拟节点）
+# YAML 中可配置 valid_roles 列表，亦可使用默认（ALL_ROLES + _approval）
+_yaml_roles = _wcfg("valid_roles", None)
+if _yaml_roles:
+    VALID_ROLES = set(_yaml_roles)
+else:
+    VALID_ROLES = set(ALL_ROLES) | {"_approval"}
 
 
 # ═══════════════════════════════════════════════════
@@ -191,13 +198,13 @@ async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider, de
         context = context.rstrip() + "\n\n[技术知识储备]\n" + lib_ctx
 
     # 上下文截断保护（约 6000 tokens，避免超出模型窗口）
-    MAX_CTX = 24000
+    MAX_CTX = _wcfg("max_context_chars", 24000)
     if len(context) > MAX_CTX:
         context = context[:MAX_CTX-50] + "\n... [上下文过长，已截断]"
         logger.warning("上下文过长已截断: role=%s, len=%d", role, len(context))
 
     # 在线程池里运行同步的 LLM 调用（避免阻塞 event loop）
-    loop   = asyncio.get_event_loop()
+    loop   = asyncio.get_running_loop()
     output = await loop.run_in_executor(
         None, call_role, role, system, context, provider
     )
@@ -466,7 +473,7 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
         logger.info("  [PM] 规划任务...")
         mark_task_started("pm", "D000", user_task)
         context    = build_context("pm", user_task)
-        pm_plan    = await asyncio.get_event_loop().run_in_executor(
+        pm_plan    = await asyncio.get_running_loop().run_in_executor(
             None, call_role, "pm", load_system_prompt("pm"), context, provider
         )
         parse_state_update("pm", "D000", pm_plan)
@@ -623,7 +630,7 @@ def _extract_summary(output: str) -> str:
 
 def _latest_snap(task_id: str) -> Optional[str]:
     """找到最新的与该任务相关的快照文件名。"""
-    snap_dir = Path("state/snapshots")
+    snap_dir = PROJECT_ROOT / "state" / "snapshots"
     if not snap_dir.exists():
         return None
     snaps = sorted(snap_dir.glob(f"snap_{task_id}_*.json"),
@@ -818,8 +825,8 @@ async def _request_dag_approval(dag: list[list[dict]]) -> bool:
 
     # HTTP 模式：两阶段轮询
     if not sys.stdin.isatty():
-        ack_file = Path("state/_dag_approval_ack.json")
-        dec_file = Path("state/_dag_approval_response.json")
+        ack_file = PROJECT_ROOT / "state" / "_dag_approval_ack.json"
+        dec_file = PROJECT_ROOT / "state" / "_dag_approval_response.json"
         poll = 5
 
         # 阶段一：等待确认
@@ -954,7 +961,7 @@ async def _request_human_approval(task_node: dict, results: dict) -> dict:
 
     # ── HTTP 模式：两阶段文件轮询 ──────────────────
     if not sys.stdin.isatty():
-        approval_dir = Path("state")
+        approval_dir = PROJECT_ROOT / "state"
         ack_file     = approval_dir / "_approval_ack.json"
         decision_file = approval_dir / "_approval_response.json"
         poll = 5
@@ -1006,7 +1013,7 @@ async def _request_human_approval(task_node: dict, results: dict) -> dict:
     from state_manager import update_project
     update_project({
         "decisions_log": [{
-            "ts": __import__("datetime").datetime.now().isoformat(),
+            "ts": datetime.now().isoformat(),
             "decision": f"人工审批 {task_id}：{'批准' if approved else '中止'}",
             "made_by": "Human",
             "notes": notes,

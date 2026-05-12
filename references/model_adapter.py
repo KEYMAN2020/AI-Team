@@ -301,7 +301,7 @@ def call_role(role: str, system_prompt: str, user_message: str,
             result = _call_gemini(system_prompt, user_message, cfg, role)
         else:
             result = _call_openai_compat(system_prompt, user_message, cfg, role)
-        breaker.record_success()
+        breaker.record_success(role)
         return result
     except Exception as e:
         breaker.record_failure(role, str(e))
@@ -644,7 +644,7 @@ def load_system_prompt(role: str) -> str:
     """
     fp = _ROLES_DIR / _ROLE_FILE_MAP[role]
     content = fp.read_text(encoding="utf-8")
-    m = re.search(r"```\n([\s\S]+?)\n```", content)
+    m = re.search(r"```\r?\n([\s\S]+?)\r?\n```", content)
     prompt = m.group(1).strip() if m else re.sub(r"^#+.*\n", "", content, flags=re.MULTILINE).strip()
     # 自动追加工具说明（各角色不同）
     tools_prompt = build_tools_prompt(role)
