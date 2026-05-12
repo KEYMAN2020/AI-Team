@@ -17,8 +17,11 @@ env/
 # 项目运行时数据
 state/
 outputs/
-knowledge/
 *.log
+
+# 知识库：curated/（人类编写）入库追踪，auto/（Agent生成）不入库
+knowledge/auto/
+
 
 # 环境配置（含密钥）
 .env

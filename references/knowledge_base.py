@@ -1,123 +1,192 @@
 """
-knowledge_base.py — 项目知识库
-================================
-超越 hot_context（近3条任务）的长期记忆。
-记录架构决策、编码规范、踩过的坑、领域词汇表。
+knowledge_base.py — 项目知识库 v2.0
+====================================
+分两层隔离 Agent 幻觉风险：
 
-目录：knowledge/
-  decisions.md   架构决策记录（ADR）
-  standards.md   编码规范
-  gotchas.md     已知坑和解决方案
-  glossary.md    领域词汇表
-  postmortems.md 故障复盘
+  curated/  ← 人类编写，始终注入上下文（100% 信任）
+  auto/     ← Agent 自动生成，注入时带警告标记（可能幻觉）
 
-任何角色都可以读取知识库，PM/ARCH/DBG/CR 有权写入。
+目录：
+  knowledge/
+  ├── curated/
+  │   ├── standards.md   编码规范
+  │   ├── glossary.md    领域词汇表
+  │   └── gotchas.md     种子踩坑经验（人类编写）
+  └── auto/
+      ├── gotchas.md     Agent 自动归档的坑
+      ├── decisions.md   Agent 生成的架构决策
+      ├── postmortems.md Agent 生成的故障复盘
+      └── _manifest.json 条目索引（谁、何时、是否已审查）
 """
 
+import json
 import re
 from datetime import datetime
 from pathlib import Path
 
 KB_DIR = Path("knowledge")
+CURATED_DIR = KB_DIR / "curated"
+AUTO_DIR    = KB_DIR / "auto"
+MANIFEST_PATH = AUTO_DIR / "_manifest.json"
 
-SECTIONS = {
+# curated/ 章节（人类编写，绝对信任）
+CURATED_SECTIONS = {
+    "standards": "standards.md",
+    "glossary":  "glossary.md",
+    "gotchas":   "gotchas.md",  # 种子数据，不含 Agent 自动写入
+}
+
+# auto/ 章节（Agent 生成，可能包含幻觉）
+AUTO_SECTIONS = {
     "decisions":   "decisions.md",
-    "standards":   "standards.md",
     "gotchas":     "gotchas.md",
-    "glossary":    "glossary.md",
     "postmortems": "postmortems.md",
 }
 
-# 每个角色默认读取哪些知识库章节
+# 每个角色读取的知识库章节（标注来源类型）
 ROLE_KB_SECTIONS = {
-    "pm":       ["decisions", "gotchas"],
-    "product":  ["decisions", "glossary"],
-    "architect":["decisions", "standards", "gotchas"],
-    "ux":       ["standards", "glossary"],
-    "frontend": ["standards", "gotchas"],
-    "backend":  ["standards", "gotchas", "decisions"],
-    "dba":      ["decisions", "gotchas"],
-    "devops":   ["decisions", "gotchas"],
-    "debug":    ["gotchas", "postmortems"],
-    "reviewer": ["standards"],
-    "tester":   ["standards", "gotchas"],
+    # key = (source_type, section)
+    "pm":        [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "product":   [("auto", "decisions"), ("curated", "glossary")],
+    "architect": [("auto", "decisions"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "ux":        [("curated", "standards"), ("curated", "glossary")],
+    "frontend":  [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "backend":   [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas"), ("auto", "decisions")],
+    "dba":       [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "devops":    [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "debug":     [("curated", "gotchas"), ("auto", "gotchas"), ("auto", "postmortems")],
+    "reviewer":  [("curated", "standards")],
+    "tester":    [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
 }
-
 
 # ── 初始化 ────────────────────────────────────────
 
 def init_knowledge_base(project_name: str = "") -> None:
-    """初始化知识库，创建各章节文件。"""
-    KB_DIR.mkdir(exist_ok=True)
-    header = f"# 项目知识库\n项目：{project_name or '未命名'}\n初始化：{datetime.now().strftime('%Y-%m-%d')}\n\n---\n\n"
+    """初始化知识库，创建 curated/ 和 auto/ 目录结构。"""
+    CURATED_DIR.mkdir(parents=True, exist_ok=True)
+    AUTO_DIR.mkdir(parents=True, exist_ok=True)
 
-    defaults = {
-        "decisions.md":   header + "# 架构决策记录（ADR）\n\n（暂无记录）\n",
-        "standards.md":   header + _default_standards(),
-        "gotchas.md":     header + _default_gotchas(),
-        "glossary.md":    header + "# 领域词汇表\n\n（暂无记录）\n",
-        "postmortems.md": header + "# 故障复盘\n\n（暂无记录）\n",
+    # —— curated/ ——
+    curated_defaults = {
+        "standards.md": _default_standards(),
+        "gotchas.md":   _default_gotchas(),
+        "glossary.md":  "# 领域词汇表\n\n（暂无记录）\n",
     }
-    for filename, content in defaults.items():
-        path = KB_DIR / filename
+    for filename, content in curated_defaults.items():
+        path = CURATED_DIR / filename
         if not path.exists():
             path.write_text(content, encoding="utf-8")
 
-    print(f"✅ 知识库已初始化：{KB_DIR}/")
+    # —— auto/ ——
+    for filename in AUTO_SECTIONS.values():
+        path = AUTO_DIR / filename
+        if not path.exists():
+            path.write_text(f"# {path.stem}\n\n（暂无自动生成条目）\n", encoding="utf-8")
+
+    # —— manifest ——
+    if not MANIFEST_PATH.exists():
+        MANIFEST_PATH.write_text(json.dumps({
+            "project": project_name or "未命名",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "entries": [],
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print(f"[OK] 知识库已初始化：{KB_DIR}/ (curated + auto)")
 
 
 # ── 读取 ─────────────────────────────────────────
 
-def read_section(section: str) -> str:
-    """读取指定章节内容。"""
-    filename = SECTIONS.get(section)
+def read_section(section: str, source: str = "curated") -> str:
+    """读取指定来源的章节内容。source = 'curated' | 'auto'"""
+    sections_map = CURATED_SECTIONS if source == "curated" else AUTO_SECTIONS
+    base_dir = CURATED_DIR if source == "curated" else AUTO_DIR
+    filename = sections_map.get(section)
     if not filename:
         return f"[错误] 未知章节：{section}"
-    path = KB_DIR / filename
+    path = base_dir / filename
     if not path.exists():
-        return f"[{section}] 章节不存在，请先运行 init_knowledge_base()"
+        return f"[{section}] 章节不存在"
     return path.read_text(encoding="utf-8")
 
 
 def build_kb_context(role: str) -> str:
     """
-    为指定角色构建知识库上下文注入内容。
-    只注入该角色需要的章节，控制 token 数量。
+    为指定角色构建知识库上下文。
+    - curated/ 内容不加警告（人类编写）
+    - auto/ 内容标注「未经人工审查，仅供参考」
     """
     sections = ROLE_KB_SECTIONS.get(role, [])
     if not sections:
         return ""
 
     parts = []
-    for sec in sections:
-        content = read_section(sec)
-        # 截取关键内容，避免注入过多
+    for source, sec in sections:
+        content = read_section(sec, source)
         lines = content.split("\n")
-        # 跳过文件头部（标题和初始化信息）
-        body_lines = [l for l in lines if l.strip() and not l.startswith("#")]
-        if body_lines and body_lines[0] != "（暂无记录）":
-            preview = "\n".join(body_lines[:20])
-            if len(body_lines) > 20:
-                preview += f"\n... [共 {len(body_lines)} 行，完整内容见 knowledge/{SECTIONS[sec]}]"
+        # 过滤空行和文件级标题（# ），保留条目级标题（##）和内容
+        body_lines = [l for l in lines if l.strip() and not re.match(r'^# [^#]', l)]
+        if not body_lines or body_lines[0].startswith("（暂无"):
+            continue
+
+        preview = "\n".join(body_lines[:15])
+        if len(body_lines) > 15:
+            preview += f"\n... [共 {len(body_lines)} 行，完整内容见 knowledge/{source}/{sec}.md]"
+
+        if source == "curated":
             parts.append(f"[知识库：{sec}]\n{preview}")
+        else:
+            parts.append(f"[自动存档：{sec} —— [!] 以下为 Agent 自动生成，未经人工审查，可能有误，仅供参考]\n{preview}")
 
-    if not parts:
-        return ""
-    return "\n\n".join(parts)
+    return "\n\n".join(parts) if parts else ""
 
 
-# ── 写入 ─────────────────────────────────────────
+# ── 写入（curated/ — 人类维护）────────────────────
+
+def update_standards(section: str, content: str) -> None:
+    """更新编码规范。人类操作，写入 curated/。"""
+    path = CURATED_DIR / "standards.md"
+    _ensure_exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"\n### {section}\n{content}\n")
+    print(f"[OK] 规范已更新（curated）：{section}")
+
+
+def add_glossary(term: str, definition: str, example: str = "") -> None:
+    """添加领域词汇。人类操作，写入 curated/。"""
+    path = CURATED_DIR / "glossary.md"
+    _ensure_exists(path)
+    entry = f"\n**{term}**：{definition}"
+    if example:
+        entry += f"（例：{example}）"
+    entry += "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(entry)
+
+
+# ── 写入（auto/ — Agent 自动生成）─────────────────
+
+def _record_in_manifest(file: str, title: str, added_by: str) -> None:
+    """在 manifest 中记录一条自动生成条目（便于审查）。"""
+    if not MANIFEST_PATH.exists():
+        return
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    entry = {
+        "file":      file,
+        "title":     title,
+        "added_at":  datetime.now().isoformat(timespec="seconds"),
+        "added_by":  added_by,
+        "reviewed":  False,
+    }
+    manifest.setdefault("entries", []).append(entry)
+    MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def add_adr(title: str, context: str, decision: str,
             consequences: str, status: str = "已采纳") -> None:
-    """
-    添加架构决策记录（Architecture Decision Record）。
-    ARCH 或 PM 在做重要技术决策时调用。
-    """
-    path = KB_DIR / "decisions.md"
+    """添加架构决策记录。Agent 调用，写入 auto/。"""
+    path = AUTO_DIR / "decisions.md"
     _ensure_exists(path)
 
-    # 统计已有 ADR 数量
     content = path.read_text(encoding="utf-8")
     adr_count = content.count("## ADR-") + 1
 
@@ -126,6 +195,7 @@ def add_adr(title: str, context: str, decision: str,
 
 **状态**：{status}
 **日期**：{datetime.now().strftime('%Y-%m-%d')}
+**来源**：Agent 生成，待审查
 
 **背景**：{context}
 
@@ -137,16 +207,17 @@ def add_adr(title: str, context: str, decision: str,
 """
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
-    print(f"✅ ADR-{adr_count:03d} 已记录：{title}")
+    _record_in_manifest("auto/decisions.md", f"ADR-{adr_count:03d}：{title}", "agent")
+    print(f"[OK] ADR-{adr_count:03d} 已记录（auto）：{title}")
 
 
 def add_gotcha(title: str, symptom: str, cause: str,
                solution: str, affected_roles: list = None) -> None:
     """
-    记录已踩的坑，供其他角色和未来项目参考。
-    DBG 修完 Bug 后应调用此函数。
+    记录踩坑经验。Agent 调用（如 QA→DBG 循环），写入 auto/。
+    如需加入 curated/，人类审查后调用 promote_to_curated()。
     """
-    path = KB_DIR / "gotchas.md"
+    path = AUTO_DIR / "gotchas.md"
     _ensure_exists(path)
 
     roles_str = "、".join(affected_roles) if affected_roles else "通用"
@@ -155,6 +226,7 @@ def add_gotcha(title: str, symptom: str, cause: str,
 
 **影响角色**：{roles_str}
 **日期**：{datetime.now().strftime('%Y-%m-%d')}
+**来源**：Agent 自动生成，待审查
 
 **症状**：{symptom}
 
@@ -166,13 +238,14 @@ def add_gotcha(title: str, symptom: str, cause: str,
 """
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
-    print(f"✅ 坑已记录：{title}")
+    _record_in_manifest("auto/gotchas.md", title, "agent")
+    print(f"[OK] 坑已记录（auto）：{title}")
 
 
 def add_postmortem(incident: str, timeline: str, root_cause: str,
                    impact: str, action_items: list) -> None:
-    """记录故障复盘。"""
-    path = KB_DIR / "postmortems.md"
+    """记录故障复盘。Agent 调用，写入 auto/。"""
+    path = AUTO_DIR / "postmortems.md"
     _ensure_exists(path)
 
     items_str = "\n".join(f"  - [ ] {item}" for item in action_items)
@@ -181,6 +254,7 @@ def add_postmortem(incident: str, timeline: str, root_cause: str,
 
 **日期**：{datetime.now().strftime('%Y-%m-%d')}
 **影响**：{impact}
+**来源**：Agent 生成，待审查
 
 **时间线**：{timeline}
 
@@ -193,31 +267,67 @@ def add_postmortem(incident: str, timeline: str, root_cause: str,
 """
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
-    print(f"✅ 故障复盘已记录：{incident}")
+    _record_in_manifest("auto/postmortems.md", incident, "agent")
+    print(f"[OK] 故障复盘已记录（auto）：{incident}")
 
 
-def update_standards(section: str, content: str) -> None:
-    """更新编码规范（追加到对应章节）。"""
-    path = KB_DIR / "standards.md"
-    _ensure_exists(path)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(f"\n### {section}\n{content}\n")
-    print(f"✅ 规范已更新：{section}")
+# ── 审查与提升 ───────────────────────────────────
+
+def list_pending_review() -> list[dict]:
+    """列出所有待人工审查的 auto/ 条目。"""
+    if not MANIFEST_PATH.exists():
+        return []
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    return [e for e in manifest.get("entries", []) if not e.get("reviewed")]
 
 
-def add_glossary(term: str, definition: str, example: str = "") -> None:
-    """添加领域词汇。"""
-    path = KB_DIR / "glossary.md"
-    _ensure_exists(path)
-    entry = f"\n**{term}**：{definition}"
-    if example:
-        entry += f"（例：{example}）"
-    entry += "\n"
-    with open(path, "a", encoding="utf-8") as f:
+def promote_to_curated(file: str, entry_title: str) -> bool:
+    """
+    人工审查后，将 auto/ 中的条目提升到 curated/。
+    从 auto 文件删除该条目，追加到对应的 curated 文件。
+    """
+    # 确定 auto 和 curated 路径
+    auto_path = AUTO_DIR / (file.split("/")[-1] if "/" in file else file)
+    section_name = auto_path.stem  # e.g. "gotchas"
+    curated_path = CURATED_DIR / f"{section_name}.md"
+
+    if not auto_path.exists():
+        print(f"[ERROR] auto 文件不存在：{auto_path}")
+        return False
+
+    # 从 auto 文件中提取该条目
+    content = auto_path.read_text(encoding="utf-8")
+    pattern = rf"## {re.escape(entry_title)}.*?(?=## |\Z)"
+    m = re.search(pattern, content, re.DOTALL)
+    if not m:
+        print(f"[ERROR] 未找到条目：{entry_title}")
+        return False
+
+    # 追加到 curated（去掉「Agent 生成」标记）
+    entry = m.group(0).replace("**来源**：Agent 生成，待审查\n", "")
+    _ensure_exists(curated_path)
+    with open(curated_path, "a", encoding="utf-8") as f:
         f.write(entry)
 
+    # 从 auto 文件中移除
+    new_content = content[:m.start()] + content[m.end():]
+    auto_path.write_text(new_content, encoding="utf-8")
 
-# ── 默认编码规范 ──────────────────────────────────
+    # 更新 manifest
+    if MANIFEST_PATH.exists():
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        for e in manifest.get("entries", []):
+            if e.get("title") == entry_title and file in e.get("file", ""):
+                e["reviewed"] = True
+                e["reviewed_at"] = datetime.now().isoformat(timespec="seconds")
+                break
+        MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print(f"[OK] 已提升到 curated：{entry_title}")
+    return True
+
+
+# ── 默认内容（人类编写）──────────────────────────
 
 def _default_standards() -> str:
     return """# 编码规范
@@ -269,14 +379,16 @@ def _default_standards() -> str:
 
 
 def _default_gotchas() -> str:
-    """AI 开发团队的常见坑（种子数据），避免重复踩坑。"""
+    """人类编写的种子坑，Agent 不会自动改这里。"""
     return """# 已知坑与解决方案
 
-> DEBUG / TESTER 修完 Bug 后请在这里记录，让整个团队受益。
+> 以下为人类整理的种子经验。Agent 自动归档的坑在 auto/gotchas.md。
 
 ## 大模型输出格式不稳定
+
 **影响角色**：通用
 **日期**：2026-05-12
+**来源**：人工总结
 
 **症状**：LLM 输出中 <dag> JSON 格式错误、state_update 解析失败、偶尔不按模板输出
 
@@ -290,8 +402,10 @@ def _default_gotchas() -> str:
 ---
 
 ## Sub_requests 循环爆炸
+
 **影响角色**：PM, UX, ARCHITECT
 **日期**：2026-05-12
+**来源**：人工总结
 
 **症状**：Agent A 发 sub_request 给 Agent B，Agent B 再发 sub_request 给 Agent C，
 导致 token 消耗剧增、超时
@@ -306,8 +420,10 @@ def _default_gotchas() -> str:
 ---
 
 ## 工具调用死循环
+
 **影响角色**：FRONTEND, BACKEND, DEVOPS
 **日期**：2026-05-12
+**来源**：人工总结
 
 **症状**：Agent 在 tool_loop 中反复读取同一文件、循环调用 web_search 相同关键词
 
@@ -320,7 +436,9 @@ def _default_gotchas() -> str:
 """
 
 
+# ── 辅助 ─────────────────────────────────────────
+
 def _ensure_exists(path: Path) -> None:
     if not path.exists():
-        KB_DIR.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {path.stem}\n\n", encoding="utf-8")
