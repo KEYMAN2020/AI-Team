@@ -21,10 +21,12 @@ knowledge_base.py — 项目知识库 v2.0
 
 import json
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 
 KB_DIR = Path("knowledge")
+_manifest_lock = threading.Lock()  # _record_in_manifest 并发保护
 CURATED_DIR = KB_DIR / "curated"
 AUTO_DIR    = KB_DIR / "auto"
 MANIFEST_PATH = AUTO_DIR / "_manifest.json"
@@ -166,19 +168,20 @@ def add_glossary(term: str, definition: str, example: str = "") -> None:
 # ── 写入（auto/ — Agent 自动生成）─────────────────
 
 def _record_in_manifest(file: str, title: str, added_by: str) -> None:
-    """在 manifest 中记录一条自动生成条目（便于审查）。"""
+    """在 manifest 中记录一条自动生成条目（便于审查）。线程安全。"""
     if not MANIFEST_PATH.exists():
         return
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    entry = {
-        "file":      file,
-        "title":     title,
-        "added_at":  datetime.now().isoformat(timespec="seconds"),
-        "added_by":  added_by,
-        "reviewed":  False,
-    }
-    manifest.setdefault("entries", []).append(entry)
-    MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    with _manifest_lock:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        entry = {
+            "file":      file,
+            "title":     title,
+            "added_at":  datetime.now().isoformat(timespec="seconds"),
+            "added_by":  added_by,
+            "reviewed":  False,
+        }
+        manifest.setdefault("entries", []).append(entry)
+        MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def add_adr(title: str, context: str, decision: str,
@@ -313,15 +316,16 @@ def promote_to_curated(file: str, entry_title: str) -> bool:
     new_content = content[:m.start()] + content[m.end():]
     auto_path.write_text(new_content, encoding="utf-8")
 
-    # 更新 manifest
+    # 更新 manifest（线程安全）
     if MANIFEST_PATH.exists():
-        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        for e in manifest.get("entries", []):
-            if e.get("title") == entry_title and file in e.get("file", ""):
-                e["reviewed"] = True
-                e["reviewed_at"] = datetime.now().isoformat(timespec="seconds")
-                break
-        MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        with _manifest_lock:
+            manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            for e in manifest.get("entries", []):
+                if e.get("title") == entry_title and file in e.get("file", ""):
+                    e["reviewed"] = True
+                    e["reviewed_at"] = datetime.now().isoformat(timespec="seconds")
+                    break
+            MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"[OK] 已提升到 curated：{entry_title}")
     return True

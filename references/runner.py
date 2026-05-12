@@ -61,12 +61,13 @@ from resource_library  import build_library_context, init_resource_library
 from doc_generator     import generate_all_docs
 
 # ── 配置 ────────────────────────────────────────────
-DEFAULT_TIMEOUT  = 180   # 单个 Agent 最长等待（秒，角色级别可在 model_adapter 中覆盖）
-DEFAULT_RETRIES  = 2     # 失败重试次数
-MAX_SUB_REQUESTS = 3     # 单次执行最多处理几个 sub_requests
-QA_DBG_MAX_ITER  = 3     # QA→DBG→QA 最多循环次数
-AUTO_APPROVE     = False # True=跳过所有人工审批（CI/测试场景）
-VALID_ROLES      = set(ALL_ROLES) | {"_approval"}  # 合法角色名（含审批虚拟节点）
+DEFAULT_TIMEOUT        = 180   # 单个 Agent 最长等待（秒，角色级别可在 model_adapter 中覆盖）
+DEFAULT_RETRIES        = 2     # 失败重试次数
+MAX_SUB_REQUESTS       = 3     # 单次执行最多处理几个 sub_requests
+MAX_SUB_REQUEST_DEPTH  = 2     # sub_request 最大递归深度（防无限嵌套爆炸）
+QA_DBG_MAX_ITER        = 3     # QA→DBG→QA 最多循环次数
+AUTO_APPROVE           = False # True=跳过所有人工审批（CI/测试场景）
+VALID_ROLES            = set(ALL_ROLES) | {"_approval"}  # 合法角色名（含审批虚拟节点）
 
 
 # ═══════════════════════════════════════════════════
@@ -80,6 +81,7 @@ async def run_agent(
     retries:    int = DEFAULT_RETRIES,
     timeout:    int = DEFAULT_TIMEOUT,
     provider:   Optional[str] = None,
+    depth:      int = 0,  # sub_request 递归深度
 ) -> dict:
     """
     执行单个 Agent 任务节点。
@@ -108,7 +110,7 @@ async def run_agent(
     for attempt in range(retries + 1):
         try:
             result = await asyncio.wait_for(
-                _call_agent_async(role, task, task_id, upstream_ctx, bus, provider),
+                _call_agent_async(role, task, task_id, upstream_ctx, bus, provider, depth=depth),
                 timeout=timeout,
             )
             logger.info(f"  ✓ [{task_id}] {role.upper()} 完成")
@@ -145,7 +147,7 @@ async def run_agent(
     return {"id": task_id, "role": role, "status": "failed", "output": ""}
 
 
-async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider):
+async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider, depth=0):
     """实际调用 LLM，处理 sub_requests，返回结构化结果。"""
 
     # 读取收件箱（其他 Agent 可能已经发来了相关信息）
@@ -184,7 +186,15 @@ async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider):
     )
 
     # 处理 sub_requests（Agent 在执行中请求其他 Agent 协助）
-    output = await _handle_sub_requests(output, role, task_id, bus, provider)
+    if depth < MAX_SUB_REQUEST_DEPTH:
+        output = await _handle_sub_requests(output, role, task_id, bus, provider, depth=depth)
+    else:
+        # 已达最大深度，忽略 sub_requests
+        if re.search(r"<sub_requests>", output):
+            logger.warning(f"    ⚠ [{task_id}] sub_request 已达最大深度（{MAX_SUB_REQUEST_DEPTH}），已忽略")
+            output = re.sub(r"<sub_requests>[\s\S]*?</sub_requests>",
+                           f"\n[已达到 sub_request 最大深度 {MAX_SUB_REQUEST_DEPTH}，请求被忽略]\n",
+                           output)
 
     # 解析 state_update
     parse_state_update(role, task_id, output)
@@ -202,7 +212,7 @@ async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider):
 
 async def _handle_sub_requests(output: str, requester: str,
                                 task_id: str, bus: MessageBus,
-                                provider: Optional[str]) -> str:
+                                provider: Optional[str], depth: int = 0) -> str:
     """
     从 Agent 输出中提取 <sub_requests> 块，
     为每个请求调用对应 Agent，把结果注入回原输出。
@@ -244,16 +254,14 @@ async def _handle_sub_requests(output: str, requester: str,
 
         sub_tasks.append((sub_node, provider))
 
-    # 执行有效请求（None 占位跳过）
+    # 执行有效请求（None 占位跳过，传递 depth+1）
     async def _safe_run(node_provider):
         if node_provider is None:
             return {"status": "skipped", "output": "", "summary": "目标角色无效，已跳过"}
         node, prov = node_provider
-        return await run_agent(node, {}, bus, provider=prov)
+        return await run_agent(node, {}, bus, provider=prov, depth=depth + 1)
 
     sub_results = await asyncio.gather(*[_safe_run(st) for st in sub_tasks], return_exceptions=True)
-
-    sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
 
     # 把 sub_request 结果注入到原始输出
     injected = "\n\n[Sub-agent 协助结果]\n"
