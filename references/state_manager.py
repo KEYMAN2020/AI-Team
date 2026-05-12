@@ -243,6 +243,45 @@ def mark_task_started(role: str, dispatch_id: str, task_desc: str) -> None:
 # 公共 API — 回滚
 # ═══════════════════════════════════════════════════════
 
+def _verify_snap(snap_path: Path) -> list[str]:
+    """
+    验证快照文件完整性，返回问题列表（空列表=通过）。
+    检查：文件存在、有效JSON、schema版本、必要顶层键。
+    """
+    issues = []
+    if not snap_path.exists():
+        issues.append(f"快照文件不存在：{snap_path}")
+        return issues
+
+    try:
+        raw = snap_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        issues.append(f"快照文件 JSON 损坏：{e}")
+        return issues
+    except Exception as e:
+        issues.append(f"无法读取快照文件：{e}")
+        return issues
+
+    ver = data.get("_meta", {}).get("schema_version")
+    if ver != SCHEMA_VER:
+        issues.append(f"快照 schema 版本不匹配（快照={ver}，当前={SCHEMA_VER}），可能不兼容")
+
+    for key in ["project", "roles", "checkpoints"]:
+        if key not in data:
+            issues.append(f"快照缺少顶层键：{key}")
+
+    # 检查所有 11 个角色是否完整
+    expected_roles = {"pm","product","architect","ux","dba",
+                      "frontend","backend","reviewer","devops","debug","tester"}
+    snap_roles = set(data.get("roles", {}).keys())
+    missing = expected_roles - snap_roles
+    if missing:
+        issues.append(f"快照缺少角色定义：{sorted(missing)}")
+
+    return issues
+
+
 def rollback_to_snap(snap_file: str) -> None:
     """
     回滚到指定快照。
@@ -273,13 +312,24 @@ def rollback_to_snap(snap_file: str) -> None:
     if not target.exists():
         raise FileNotFoundError(f"快照文件不存在：{target}")
 
+    # —— 完整性校验 ——
+    issues = _verify_snap(target)
+    if issues:
+        raise RuntimeError(
+            f"快照 {target.name} 完整性校验失败：\n  " + "\n  ".join(issues)
+        )
+    print(f"✅ 快照 {target.name} 完整性校验通过")
+
     # 把当前 master 先备份一份（以防误回滚）
     safety = SNAP_DIR / f"snap_pre_rollback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     if MASTER_PATH.exists():
         shutil.copy2(MASTER_PATH, safety)
 
     shutil.copy2(target, MASTER_PATH)
+
+    # 回滚后提示：消息总线和 outputs/ 未回退，需人工关注
     print(f"✅ 已回滚到快照：{target.name}（当前状态已备份到 {safety.name}）")
+    print(f"⚠️  注意：消息总线（state/messages.jsonl）和生成文件（outputs/）未回退，可能需要手动清理。")
 
 def rollback_to_dispatch(dispatch_id: str) -> None:
     """

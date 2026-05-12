@@ -49,7 +49,7 @@ logger = logging.getLogger("runner")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from message_bus import MessageBus, get_bus, TASK, RESULT, REQUEST, INFO
+from message_bus import MessageBus, get_bus, TASK, RESULT, REQUEST, INFO, ALL_ROLES
 from model_adapter import (call_role, load_system_prompt,
                             get_role_timeout,
                             reset_token_usage, compute_usage_summary)
@@ -66,6 +66,7 @@ DEFAULT_RETRIES  = 2     # 失败重试次数
 MAX_SUB_REQUESTS = 3     # 单次执行最多处理几个 sub_requests
 QA_DBG_MAX_ITER  = 3     # QA→DBG→QA 最多循环次数
 AUTO_APPROVE     = False # True=跳过所有人工审批（CI/测试场景）
+VALID_ROLES      = set(ALL_ROLES) | {"_approval"}  # 合法角色名（含审批虚拟节点）
 
 
 # ═══════════════════════════════════════════════════
@@ -150,12 +151,12 @@ async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider):
     # 读取收件箱（其他 Agent 可能已经发来了相关信息）
     inbox_ctx = bus.format_inbox_for_context(role)
 
-    # 构建完整任务描述
+    # 构建完整任务描述（所有注入内容标来源，提醒下游交叉验证）
     full_task = task
     if upstream_ctx:
-        full_task += f"\n\n[上游输出]\n{upstream_ctx}"
+        full_task += f"\n\n[上游输出 — 以下来自其他 Agent 的输出，可能有误，使用工具自行验证]\n{upstream_ctx}"
     if inbox_ctx:
-        full_task += f"\n\n[收件箱]\n{inbox_ctx}"
+        full_task += f"\n\n[收件箱 — 以下来自消息总线，可能有误]\n{inbox_ctx}"
 
     mark_task_started(role, task_id, task)
 
@@ -226,17 +227,31 @@ async def _handle_sub_requests(output: str, requester: str,
 
     logger.info(f"    ↳ {requester.upper()} 发起 {len(requests)} 个 sub_request")
 
-    # 并行处理所有 sub_requests
+    # 并行处理所有 sub_requests（校验目标角色合法性）
     sub_tasks = []
     for i, req in enumerate(requests):
+        target = req.get("to", "")
+        if target not in VALID_ROLES:
+            logger.warning(f"    ⚠ sub_request 目标角色 '{target}' 无效，已忽略")
+            sub_tasks.append(None)  # 占位，保持索引对齐
+            continue
         sub_id = f"{task_id}_sub{i+1}"
-        sub_node = {"role": req["to"], "task": req["task"], "id": sub_id}
+        sub_node = {"role": target, "task": req["task"], "id": sub_id}
 
         # 通知消息总线
-        await bus.post(requester, req["to"], REQUEST, req["task"],
+        await bus.post(requester, target, REQUEST, req["task"],
                        metadata={"parent_task": task_id, "sub_id": sub_id})
 
-        sub_tasks.append(run_agent(sub_node, {}, bus, provider=provider))
+        sub_tasks.append((sub_node, provider))
+
+    # 执行有效请求（None 占位跳过）
+    async def _safe_run(node_provider):
+        if node_provider is None:
+            return {"status": "skipped", "output": "", "summary": "目标角色无效，已跳过"}
+        node, prov = node_provider
+        return await run_agent(node, {}, bus, provider=prov)
+
+    sub_results = await asyncio.gather(*[_safe_run(st) for st in sub_tasks], return_exceptions=True)
 
     sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
 
@@ -245,10 +260,15 @@ async def _handle_sub_requests(output: str, requester: str,
     for req, res in zip(requests, sub_results):
         if isinstance(res, Exception):
             injected += f"- {req['to'].upper()}：执行出错\n"
-        elif isinstance(res, dict) and res.get("status") == "done":
-            injected += f"- {req['to'].upper()}：{res.get('summary','')}\n"
+        elif isinstance(res, dict):
+            if res.get("status") == "done":
+                injected += f"- {req['to'].upper()}：{res.get('summary','')}\n"
+            elif res.get("status") == "skipped":
+                injected += f"- {req['to'].upper()}：已忽略（目标角色无效）\n"
+            else:
+                injected += f"- {req['to'].upper()}：未完成\n"
         else:
-            injected += f"- {req['to'].upper()}：未完成\n"
+            injected += f"- {req['to'].upper()}：未知错误\n"
 
     # 移除 sub_requests 块，追加结果
     output = re.sub(r"<sub_requests>[\s\S]*?</sub_requests>", "", output)
@@ -411,6 +431,14 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
         # 从 PM 输出中提取 DAG（或用默认流程）
         dag = _extract_dag(pm_plan, user_task)
 
+        # ── Step 1.4：DAG 校验 ──────────────────────
+        dag_issues = _validate_dag(dag)
+        if dag_issues:
+            logger.warning("  [校验] DAG 存在问题，使用默认流程：")
+            for issue in dag_issues:
+                logger.warning(f"    - {issue}")
+            dag = _load_default_dag(user_task)
+
         # ── Step 1.5：DAG 预览 & 确认 ────────────────
         approved = await _request_dag_approval(dag)
         if not approved:
@@ -528,17 +556,17 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
 # ═══════════════════════════════════════════════════
 
 def _collect_upstream(task_node: dict, results: dict, bus: MessageBus) -> str:
-    """收集依赖任务的输出，拼成上下文字符串。"""
+    """收集依赖任务的输出，拼成上下文字符串。标注每个输出来源，提示下游验证。"""
     deps = task_node.get("depends_on", [])
     if not deps:
         return ""
-    lines = []
+    lines = ["注意：以下信息来自上游 Agent，可能包含错误。请使用 file_read/code_run 自行验证关键信息。"]
     for dep_id in deps:
         if dep_id in results and results[dep_id].get("status") == "done":
             r = results[dep_id]
-            preview = r.get("output", "")[:800]
-            lines.append(f"[来自 {r['role'].upper()} / {dep_id}]\n{preview}")
-    return "\n\n".join(lines)
+            preview = r.get("output", "")[:600]
+            lines.append(f"\n── 来自 {r['role'].upper()} [{dep_id}] ──\n{preview}")
+    return "\n".join(lines)
 
 def _extract_summary(output: str) -> str:
     """从输出中提取 state_update 的 summary 字段。"""
@@ -607,8 +635,68 @@ def _extract_dag(pm_output: str, fallback_task: str) -> list:
 
 
 # ═══════════════════════════════════════════════════
-# DAG 预览与审批
+# DAG 校验
 # ═══════════════════════════════════════════════════
+
+def _validate_dag(dag: list[list[dict]]) -> list[str]:
+    """
+    校验 DAG 的合法性，返回问题列表（空列表表示通过）。
+
+    检查项：
+    1. 角色名是否合法
+    2. 所有 depends_on 引用的 task_id 是否存在
+    3. 是否存在循环依赖
+    4. 是否存在重复 task_id
+    """
+    issues = []
+
+    # 收集所有 task_id
+    all_ids = set()
+    for tier in dag:
+        for node in tier:
+            tid = node.get("id", "")
+            role = node.get("role", "")
+            if not tid or not role:
+                issues.append(f"任务节点缺少 id 或 role：{node}")
+                continue
+            if tid in all_ids:
+                issues.append(f"重复的 task_id：{tid}")
+            all_ids.add(tid)
+
+            if role not in VALID_ROLES:
+                issues.append(f"无效角色 '{role}'（task_id={tid}）。合法角色：{sorted(VALID_ROLES)}")
+
+    # 检查 depends_on 引用是否存在
+    for tier in dag:
+        for node in tier:
+            for dep in node.get("depends_on", []):
+                if dep not in all_ids:
+                    issues.append(f"{node.get('id','?')} 依赖 {dep}，但 {dep} 不在 DAG 中")
+
+    # 检查循环依赖（DFS）
+    def _has_cycle(tid, visited, rec_stack):
+        visited.add(tid)
+        rec_stack.add(tid)
+        for tier in dag:
+            for node in tier:
+                if node.get("id") == tid:
+                    for dep in node.get("depends_on", []):
+                        if dep not in visited:
+                            if _has_cycle(dep, visited, rec_stack):
+                                return True
+                        elif dep in rec_stack:
+                            return True
+        rec_stack.discard(tid)
+        return False
+
+    visited = set()
+    for tid in all_ids:
+        if tid not in visited:
+            if _has_cycle(tid, visited, set()):
+                issues.append(f"检测到循环依赖，涉及：{tid}")
+                break  # 报一个就行
+
+    return issues
 
 def _load_default_dag(fallback_task: str) -> list:
     """返回默认的完整开发流程 DAG（委托给 _extract_dag 的 fallback 逻辑，避免重复定义）。"""
@@ -726,24 +814,62 @@ async def _request_dag_approval(dag: list[list[dict]]) -> bool:
 
 
 def _tester_found_bugs(tester_result: dict) -> bool:
-    """检查 Tester 的输出是否指示发现了 Bug。
-    采用正负双向关键词：正向命中 + 无否定词 → 判定有Bug。
-    避免"测试通过，无 bug"这类输出被误判。"""
+    """
+    检查 Tester 的输出是否指示发现了需要修复的 Bug。
+
+    判断逻辑（多信号交叉验证，避免关键词误判）：
+    1. 查找结构化 Bug 条目：匹配 'BUG-001'、'Bug #1'、'缺陷-01' 模式
+    2. 查找质量结论：'阻塞发布' / '有条件发布' → 确认有 Bug
+       '可发布' → 确认无 Bug
+    3. 两项信号交叉验证：只有两种信号一致时才判定
+    4. 回退：如果找不到结构化信号，检查是否有失败测试用例列表（TC- 标记为 FAIL）
+    """
     if not tester_result or tester_result.get("status") != "done":
         return False
-    output = (tester_result.get("output") or "") + " " + (tester_result.get("summary") or "")
-    output_lower = output.lower()
 
-    positive = ["bug", "fail", "breaking", "critical", "缺陷", "故障",
-                "不通过", "未通过", "修复", "异常"]
-    negative = ["测试通过", "全部通过", "all tests passed", "successfully",
-                "无异常", "无bug", "no bug", "no error", "no fail",
-                "all passing", "零缺陷", "无故障", "everything passed"]
+    output = tester_result.get("output") or ""
+    summary = tester_result.get("summary") or ""
+    full = output + " " + summary
 
-    hits_positive = any(kw in output_lower for kw in positive)
-    hits_negative = any(kw in output_lower for kw in negative)
+    # 信号1：结构化 Bug 条目（精确匹配，避免误判）
+    bug_patterns = [
+        r'\bBUG[-_]\d+',           # BUG-001, BUG_001
+        r'\bBug\s*#\s*\d+',        # Bug #001
+        r'缺陷[-_]\d+',             # 缺陷-01
+        r'\bDEFECT[-_]\d+',        # DEFECT-001
+    ]
+    has_structured_bugs = any(
+        re.search(p, full, re.IGNORECASE) for p in bug_patterns
+    )
 
-    return hits_positive and not hits_negative
+    # 信号2：质量结论
+    has_blocking = bool(re.search(r'阻塞发布|block.*release|不能发布|不可发布', full, re.IGNORECASE))
+    has_conditional = bool(re.search(r'有条件发布|conditional.*release', full, re.IGNORECASE))
+    has_clear = bool(re.search(r'可发布\b|可以发布|ready.*release|cleared.*release', full, re.IGNORECASE))
+    bugs_found = has_blocking or has_conditional
+
+    # 两个信号都指向「有Bug」→ 确认
+    if has_structured_bugs and bugs_found:
+        return True
+    # 两个信号都指向「无Bug」→ 确认
+    if not has_structured_bugs and not bugs_found and has_clear:
+        return False
+
+    # 信号不一致时：有结构化Bug但结论是「可发布」→ 保守处理，视为有Bug
+    if has_structured_bugs and has_clear:
+        return True
+
+    # 信号3（回退）：检查失败测试用例
+    # 匹配 "TC-XXX ... FAIL" 或 "✗ TC-XXX" 模式
+    has_failed_tests = bool(re.search(
+        r'(TC[-_]\d+).{0,30}(FAIL|失败|✗|❌|不通过)',
+        full, re.IGNORECASE
+    ))
+    if has_failed_tests and not has_clear:
+        return True
+
+    # 没有任何明确信号 → 视为无 Bug（避免误触发 QA→DBG 循环）
+    return False
 
 
 async def _request_human_approval(task_node: dict, results: dict) -> dict:

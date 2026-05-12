@@ -173,14 +173,19 @@ class MessageBus:
         """
         生成注入 Agent 上下文的收件箱摘要（纯文本）。
         让 Agent 知道其他 Agent 发来了什么信息。
+        消息来自其他 Agent，可能包含幻觉或错误，提示下游自行验证。
         """
         history = self.load_history(role=role, limit=limit)
         incoming = [m for m in history if m.get("to") == role]
         if not incoming:
             return ""
-        lines = [f"其他 Agent 发来的消息（最近 {len(incoming)} 条）："]
+        lines = ["其他 Agent 发来的消息（最近 {} 条，来自 LLM 输出，请自行验证关键信息）：".format(len(incoming))]
         for m in incoming[-limit:]:
-            lines.append(f"  [{m['from'].upper()} → {m['type']}] {m['content'][:100]}")
+            lines.append("  [{from_role} → {type}] {content}".format(
+                from_role=m['from'].upper(),
+                type=m['type'],
+                content=m['content'][:120]
+            ))
         return "\n".join(lines)
 
     # ── 内部方法 ──────────────────────────────────────
