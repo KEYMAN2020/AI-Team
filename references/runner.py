@@ -32,12 +32,21 @@ DAG 格式（PM 输出后由此模块解析执行）：
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Force UTF-8 on Windows to avoid GBK encoding errors with emoji
+if sys.platform == "win32":
+    import io
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,6 +57,18 @@ logging.basicConfig(
 logger = logging.getLogger("runner")
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Auto-load .env file (relative to project root)
+_env_file = Path(__file__).resolve().parent.parent / ".env"
+if _env_file.exists():
+    with open(_env_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                v = v.strip().strip('"').strip("'")
+                if k.strip() not in os.environ:
+                    os.environ[k.strip()] = v
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent  # ai-team/
 
