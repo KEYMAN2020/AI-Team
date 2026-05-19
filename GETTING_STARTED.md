@@ -41,22 +41,29 @@ Cherry Studio / Codex / Claude Code / 终端 / curl
 ### 1. Python 依赖
 
 ```bash
-cd D:\RealWork\ai-team
+cd ai-team
 pip install -r requirements.txt
-
-# 至少装一个模型 SDK（当前默认用 DeepSeek，装 openai 即可）
-pip install openai
 ```
 
-### 2. API Key
+### 2. 配置 API Key
 
 ```bash
-# 按你用的模型设置（当前默认 deepseek）
-set DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxx
+# 复制配置模板
+cp .env.example .env
 
-# 如果用 Claude
-set ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
+# 用编辑器打开 .env，填入你的 Key
+notepad .env
 ```
+
+`.env` 文件内容（只填你用的那个）：
+
+```bash
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxx    # 当前默认用这个
+# ANTHROPIC_API_KEY=sk-ant-xxxxx     # 如果用 Claude
+# OPENAI_API_KEY=sk-xxxxx            # 如果用 OpenAI
+```
+
+> `.env` 已在 `.gitignore` 中，不会被提交到 Git。`ait` 和 `server.py` 启动时自动读取。
 
 ### 3. 切换模型（可选）
 
@@ -75,7 +82,7 @@ active_provider: deepseek  # deepseek | claude | openai | gemini | any
 ### 启动 Harness
 
 ```bash
-cd D:\RealWork\ai-team
+cd ai-team
 python server.py
 ```
 
