@@ -344,6 +344,7 @@ def _exec_code_run(language: str, code: str, timeout: int = 30) -> str:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
             cwd=str(Path.cwd()), preexec_fn=preexec_fn,
+            encoding="utf-8", errors="replace",
         )
         output = []
         if result.stdout:
@@ -431,6 +432,7 @@ def _exec_bash(command: str, timeout: int = 60) -> str:
         result = subprocess.run(
             cmd_parts, shell=False, capture_output=True, text=True,
             timeout=timeout, cwd=cwd,
+            encoding="utf-8", errors="replace",
         )
         output = []
         if result.stdout:

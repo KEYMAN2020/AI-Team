@@ -8,25 +8,25 @@ model_config:
     model: deepseek-v4-pro
     temperature: 0.0
     thinking: true
-    timeout: 120
+    timeout: 300
   claude:
     model: claude-opus-4-20250514
     temperature: 0.0
     thinking: true
     budget: 2000
-    timeout: 120
+    timeout: 300
   openai:
     model: gpt-4o
     temperature: 0.0
-    timeout: 120
+    timeout: 300
   gemini:
     model: gemini-2.0-flash
     temperature: 0.0
-    timeout: 120
+    timeout: 300
   any:
     model: gpt-4o
     temperature: 0.0
-    timeout: 120
+    timeout: 300
 tools:
 - file_read
 - diff_view

@@ -18,7 +18,7 @@ max_sub_request_depth: 2
 qa_dbg_max_iter: 3
 
 # 自动批准（CI/测试场景跳过人工审批）
-auto_approve: false
+auto_approve: true
 
 # 有效的角色名集合（可选覆盖；默认从 role_registry 自动发现 + _approval）
 # 取消注释可手动指定，注释则自动从 roles/*/config.yaml 发现

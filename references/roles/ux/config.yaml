@@ -7,24 +7,24 @@ model_config:
     model: deepseek-v4-flash
     temperature: 0.7
     thinking: false
-    timeout: 90
+    timeout: 300
   claude:
     model: claude-sonnet-4-20250514
     temperature: 0.7
     thinking: false
-    timeout: 90
+    timeout: 300
   openai:
     model: gpt-4o
     temperature: 0.7
-    timeout: 90
+    timeout: 300
   gemini:
     model: gemini-2.0-flash
     temperature: 0.7
-    timeout: 90
+    timeout: 300
   any:
     model: gpt-4o
     temperature: 0.7
-    timeout: 90
+    timeout: 300
 tools:
 - web_search
 - file_read
