@@ -186,7 +186,7 @@ def _check_dependencies():
     import_map = {
         "anthropic":  "anthropic",
         "openai":     "openai",
-        "google-genai": "google.generativeai",
+        "google-genai": "google.genai",
         "pyyaml":     "yaml",
     }
 
