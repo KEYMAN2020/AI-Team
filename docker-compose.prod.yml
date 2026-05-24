@@ -1,0 +1,52 @@
+# =============================================================================
+# docker-compose.prod.yml — 生产环境覆盖配置
+# =============================================================================
+# 与 docker-compose.yml 合并使用：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# =============================================================================
+
+version: "3.8"
+
+services:
+  app:
+    # 生产环境使用预构建镜像（不从源码构建）
+    build: !reset null
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_NAMESPACE:-ai-team}/ai-team:${AI_TEAM_VERSION:-latest}
+    restart: always
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=WARNING
+    # 生产环境资源限制更严格
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
+    # 生产环境日志驱动
+    logging:
+      driver: "local"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  nginx:
+    restart: always
+    # 生产环境启用 HTTPS
+    ports:
+      - "80:80"
+      - "443:443"
+
+  watchtower:
+    profiles:
+      - production
+    # 生产环境启用自动更新
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=86400  # 每天检查一次
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_NOTIFICATIONS=slack
+      - WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - WATCHTOWER_NOTIFICATION_SLACK_IDENTIFIER=ai-team

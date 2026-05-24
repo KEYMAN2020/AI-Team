@@ -1,0 +1,229 @@
+# =============================================================================
+# cd.yml — AI-TeaM 持续部署流水线
+# =============================================================================
+# 触发条件：
+#   - CI 流水线成功完成后自动触发
+#   - 手动触发部署到指定环境
+# =============================================================================
+# 部署策略：蓝绿部署（Blue-Green Deployment）
+#   1. 构建新版本镜像
+#   2. 启动新容器（绿色）
+#   3. 健康检查通过后切换流量
+#   4. 保留旧容器（蓝色）用于快速回滚
+# =============================================================================
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main, master]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "部署目标环境"
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      version:
+        description: "部署版本（留空使用 latest）"
+        type: string
+        default: ""
+
+env:
+  PYTHON_VERSION: "3.11"
+  DOCKER_IMAGE_NAME: ai-team
+  REGISTRY: ghcr.io
+
+jobs:
+  # ── 部署到 Staging ─────────────────────────────────
+  deploy-staging:
+    name: "🚀 部署到 Staging"
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: https://staging.ai-team.example.com
+
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🔑 设置 SSH 连接"
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_KEY }}
+
+      - name: "📋 生成部署版本号"
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_SHA::8}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "部署版本: $VERSION"
+
+      - name: "🚀 部署到 Staging 服务器"
+        env:
+          DEPLOY_HOST: ${{ secrets.STAGING_HOST }}
+          DEPLOY_USER: ${{ secrets.STAGING_USER }}
+          APP_ENV: staging
+          AI_TEAM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # 将部署脚本和配置同步到远程服务器
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '__pycache__' \
+            --exclude '.env' \
+            --exclude 'state/' \
+            --exclude 'outputs/' \
+            --exclude 'logs/' \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            ./ ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/ai-team/
+
+          # 远程执行部署
+          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
+            "cd /opt/ai-team && \
+             export APP_ENV=staging && \
+             export AI_TEAM_VERSION=${AI_TEAM_VERSION} && \
+             echo '拉取最新镜像...' && \
+             docker compose -f docker-compose.yml pull app && \
+             echo '启动服务...' && \
+             docker compose -f docker-compose.yml up -d app && \
+             echo '等待健康检查...' && \
+             for i in \$(seq 1 30); do \
+               if curl -sf http://localhost:8123/health > /dev/null 2>&1; then \
+                 echo '✅ 健康检查通过'; \
+                 break; \
+               fi; \
+               sleep 2; \
+             done"
+
+      - name: "📤 部署完成通知"
+        if: always()
+        run: |
+          echo "## ✅ Staging 部署完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 属性 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| 环境 | staging |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://staging.ai-team.example.com |" >> $GITHUB_STEP_SUMMARY
+          echo "| 版本 | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ── 部署到 Production（蓝绿部署）───────────────────
+  deploy-production:
+    name: "🚀 部署到 Production（蓝绿部署）"
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: deploy-staging
+    environment:
+      name: production
+      url: https://ai-team.example.com
+
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🔑 设置 SSH 连接"
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PRODUCTION_SSH_KEY }}
+
+      - name: "📋 生成部署版本号"
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_SHA::8}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "部署版本: $VERSION"
+
+      - name: "💾 部署前备份（状态数据）"
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_USER }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
+            "cd /opt/ai-team && \
+             BACKUP_DIR=/opt/backups/ai-team/\$(date +%Y%m%d_%H%M%S) && \
+             mkdir -p \$BACKUP_DIR && \
+             echo '备份 Docker 卷数据...' && \
+             docker run --rm -v ai-team-state-data:/source -v \$BACKUP_DIR:/backup alpine tar czf /backup/state.tar.gz -C /source . && \
+             docker run --rm -v ai-team-outputs-data:/source -v \$BACKUP_DIR:/backup alpine tar czf /backup/outputs.tar.gz -C /source . && \
+             echo '✅ 备份完成: \$BACKUP_DIR'"
+
+      - name: "🚀 蓝绿部署到 Production"
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_USER }}
+          AI_TEAM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
+            "cd /opt/ai-team && \
+             export AI_TEAM_VERSION=${AI_TEAM_VERSION} && \
+             \
+             # 步骤 1: 拉取新版本镜像 \
+             echo '步骤 1/4: 拉取新版本镜像...' && \
+             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull app && \
+             \
+             # 步骤 2: 启动新版本（绿色） \
+             echo '步骤 2/4: 启动新版本（绿色）...' && \
+             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --scale app=2 app && \
+             \
+             # 步骤 3: 等待新容器健康检查 \
+             echo '步骤 3/4: 等待新版本健康检查...' && \
+             sleep 10 && \
+             HEALTHY=false && \
+             for i in \$(seq 1 30); do \
+               if curl -sf http://localhost:8123/health > /dev/null 2>&1; then \
+                 HEALTHY=true; \
+                 echo '✅ 新版本健康检查通过'; \
+                 break; \
+               fi; \
+               sleep 2; \
+             done && \
+             \
+             if [ \"\$HEALTHY\" = false ]; then \
+               echo '❌ 新版本健康检查失败，执行自动回滚'; \
+               docker compose -f docker-compose.yml -f docker-compose.prod.yml stop app; \
+               docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --scale app=1 app; \
+               exit 1; \
+             fi && \
+             \
+             # 步骤 4: 停止旧版本（蓝色），保留一个副本用于回滚 \
+             echo '步骤 4/4: 切换流量到新版本...' && \
+             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --scale app=1 app && \
+             echo '✅ 蓝绿部署完成'"
+
+      - name: "✅ 部署完成通知"
+        if: success()
+        run: |
+          echo "## ✅ Production 部署完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 属性 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| 环境 | production |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://ai-team.example.com |" >> $GITHUB_STEP_SUMMARY
+          echo "| 版本 | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 策略 | 蓝绿部署 |" >> $GITHUB_STEP_SUMMARY
+
+      - name: "❌ 部署失败通知"
+        if: failure()
+        run: |
+          echo "## ❌ Production 部署失败" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "请检查日志并执行回滚:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "bash scripts/rollback.sh production" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

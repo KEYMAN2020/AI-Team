@@ -1,24 +1,18 @@
-"""
-server.py — n8n HTTP 集成入口
-=================================
-为 AI 开发团队提供 HTTP API，供 n8n 工作流调用。
-
-架构：
-  Cherry Studio（人类 I/O）→ n8n（工作流编排）→ server.py → Claude API（多 Agent 执行）
-
-端點：
-  POST /run         提交项目任务，返回 task_id（异步执行）
-  GET  /status      查看当前项目和所有角色状态
-  GET  /health      健康检查
-  POST /approve     批准等待中的人工审批节点
-
-用法：
-  # 启动服务器（默认 127.0.0.1:8123）
-  python server.py
-
-  # n8n HTTP Request 节点 -> POST http://localhost:8123/run
-  # Body: {"task": "实现用户注册登录功能"}
-"""
+# AI-TeaM HTTP Server
+# ====================
+# Cherry Studio（人类 I/O）→ n8n（工作流编排）→ server.py → LLM API（多 Agent 执行）
+#
+# 端點：
+#   POST /run         提交项目任务，返回 task_id（异步执行）
+#   GET  /status      查看当前项目和所有角色状态
+#   GET  /health      健康检查
+#   POST /approve     批准等待中的人工审批节点
+#
+# 用法：
+#   python start_server.py   # 推荐（自动清除代理，keys 来自环境变量）
+#   python server.py         # 直接启动（需先设好环境变量）
+#
+# ====================
 
 import asyncio
 import json
@@ -27,16 +21,47 @@ import sys
 import threading
 import time
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+from queue import Queue, Empty
 
-# Force UTF-8 on Windows to avoid GBK encoding errors with emoji
-if sys.platform == "win32":
-    import io
-    if hasattr(sys.stdout, "buffer"):
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    if hasattr(sys.stderr, "buffer"):
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# ── 事件总线（SSE 实时推送） ──
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "references"))
+import event_bus
+
+# ── 清除代理（避免 httpx/OpenAI SDK 走代理导致连接问题）──
+# API Key 通过系统环境变量注入，参见 .env.example
+for _proxy_var in ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY'):
+    os.environ.pop(_proxy_var, None)
+
+def _set_utf8_stdio():
+    """Force UTF-8 on Windows stdout/stderr to avoid GBK encoding errors with emoji."""
+    if sys.platform == "win32":
+        import io
+        for _s in (sys.stdout, sys.stderr):
+            if hasattr(_s, "buffer"):
+                try:
+                    _replacement = io.TextIOWrapper(_s.buffer, encoding="utf-8", errors="replace")
+                    if _s is sys.stdout:
+                        sys.stdout = _replacement
+                    else:
+                        sys.stderr = _replacement
+                except (ValueError, OSError):
+                    pass
+
+_set_utf8_stdio()
+
+# Safe print – prevents "I/O operation on closed file" crash when asyncio
+# closes stdout/stderr on Windows (ProactorEventLoop issue)
+import builtins as _builtins
+_original_print = _builtins.print
+def _safe_print(*args, **kwargs):
+    try:
+        _original_print(*args, **kwargs)
+    except (ValueError, OSError, UnicodeEncodeError):
+        # UnicodeEncodeError: 子线程 stdout 可能是 GBK，emoji 编码失败时静默跳过
+        pass
+_builtins.print = _safe_print
 
 # 将 references/ 加入 path，使各模块可直接导入
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +71,9 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "references"))
 # 内存中的任务状态存储（n8n 轮询用）
 _tasks: dict[str, dict] = {}
 _tasks_lock = threading.Lock()
+# 并发保护：标记当前是否有项目正在执行，防止两个 /run 请求冲突
+_project_running = False
+_project_lock = threading.Lock()
 
 
 def _get_task(task_id: str) -> dict | None:
@@ -79,6 +107,12 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
         elif path.startswith("/status/"):
             task_id = path.split("/")[-1]
             self._handle_task_status(task_id)
+        elif path == "/events":
+            self._handle_sse()
+        elif path in ("/dashboard", ""):
+            self._handle_dashboard()
+        elif path == "/api/state":
+            self._handle_api_state()
         else:
             self._send_json(404, {"error": "Not Found"})
 
@@ -138,6 +172,78 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
                 pass
 
         self._send_json(200, result)
+
+    def _handle_sse(self):
+        """SSE 端点—推送实时事件给前端看板。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        q, replay = event_bus.subscribe()
+        try:
+            # 先重放历史事件（让新页面看到已发生的进度）
+            for raw in replay:
+                sse_text = event_bus.format_sse(raw)
+                try:
+                    self.wfile.write(sse_text.encode("utf-8"))
+                    self.wfile.flush()
+                except Exception:
+                    return
+
+            # 持续推送新事件
+            while True:
+                try:
+                    raw = q.get(timeout=15)  # 15s 超时用于发心跳
+                    sse_text = event_bus.format_sse(raw)
+                    self.wfile.write(sse_text.encode("utf-8"))
+                    self.wfile.flush()
+                except Empty:
+                    # 心跳 keepalive
+                    try:
+                        self.wfile.write(b": heartbeat\n\n")
+                        self.wfile.flush()
+                    except Exception:
+                        return
+        finally:
+            event_bus.unsubscribe(q)
+
+    def _handle_dashboard(self):
+        """提供实时看板 HTML。"""
+        html_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "web_dashboard", "live_dashboard.html"
+        )
+        if not os.path.exists(html_path):
+            self._send_json(404, {"error": "Dashboard HTML not found"})
+            return
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_api_state(self):
+        """JSON 接口—轮询兜底用（返回 master.json 快照）。"""
+        try:
+            from state_manager import get_project, list_checkpoints
+            proj = get_project()
+            cps = list_checkpoints()
+            self._send_json(200, {
+                "project": proj,
+                "checkpoints": len(cps),
+                "active_tasks": list(_tasks.keys()),
+            })
+        except FileNotFoundError:
+            self._send_json(200, {"project": None, "message": "无活动项目"})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
 
     def _handle_run(self):
         """提交一个项目开发任务，异步执行。
@@ -338,9 +444,28 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
 def _run_async_task(task_id: str, task_desc: str, project_name: str,
                     provider: str | None, webhook_url: str | None):
     """在后台线程中运行 asyncio 事件循环。"""
+    global _project_running
+
+    # 子线程 stdout/stderr 可能恢复为 GBK，重新设为 UTF-8
+    _set_utf8_stdio()
     try:
         from state_manager import init_project, MASTER_PATH, get_project
         from runner import run_project
+
+        # 并发保护：检查是否有项目正在执行
+        with _project_lock:
+            if _project_running:
+                print(f"✗ 已有项目正在执行，拒绝新任务 {task_id}")
+                _set_task(task_id, {
+                    **_get_task(task_id),
+                    "status": "error",
+                    "completed_at": datetime.now().isoformat(),
+                    "error": "已有项目正在执行，请等待完成后重试",
+                })
+                if webhook_url:
+                    _call_webhook(webhook_url, task_id, "error", "项目正在执行中")
+                return
+            _project_running = True
 
         # 断点续跑检测：如果 master.json 存在且项目未完成，直接恢复
         if MASTER_PATH.exists():
@@ -365,6 +490,7 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
 
         # 正常启动：初始化新项目
         init_project(project_name)
+        event_bus.emit("project_initialized", {"project_name": project_name, "task": task_desc[:120]})
 
         # 运行 DAG
         result = asyncio.run(run_project(task_desc, provider=provider))
@@ -376,6 +502,7 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
             "completed_at": datetime.now().isoformat(),
             "result": result[:3000] if result else "",
         })
+        event_bus.emit("task_completed", {"task_id": task_id, "project_name": project_name})
 
         # 如果有 webhook URL，通知 n8n
         if webhook_url:
@@ -391,11 +518,17 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
             "status": "error",
             "completed_at": datetime.now().isoformat(),
             "error": str(e),
-            "traceback": error_info[-2000:],
+            "traceback": error_info[-4000:],
         })
+        event_bus.emit("task_error", {"task_id": task_id, "project_name": project_name,
+                                       "error": str(e)})
 
         if webhook_url:
             _call_webhook(webhook_url, task_id, "error", str(e))
+
+    finally:
+        with _project_lock:
+            _project_running = False
 
 
 def _call_webhook(url: str, task_id: str, status: str, error: str = ""):
@@ -429,23 +562,28 @@ def main():
     if not preflight_check(port=port):
         sys.exit(1)
 
-    server = HTTPServer((host, port), TeamHTTPHandler)
+    server = ThreadingHTTPServer((host, port), TeamHTTPHandler)
 
     print(f"╔══════════════════════════════════════════╗")
     print(f"║  AI 开发团队 — HTTP 服务器              ║")
     print(f"║══════════════════════════════════════════║")
     print(f"║  地址: http://{host}:{port}              ")
     print(f"║  服务:                                   ║")
-    print(f"║    POST /run        提交开发任务            ║")
-    print(f"║    GET  /status     项目状态               ║")
-    print(f"║    GET  /status/id  任务状态               ║")
-    print(f"║    POST /approve    人工审批                ║")
-    print(f"║    POST /approve-dag DAG 执行计划审批       ║")
-    print(f"║    GET  /health     健康检查                ║")
+    print(f"║    POST /run        提交开发任务               ║")
+    print(f"║    GET  /status     项目状态                  ║")
+    print(f"║    GET  /status/id  任务状态                  ║")
+    print(f"║    GET  /events     SSE 实时事件流            ║")
+    print(f"║    GET  /dashboard  实时看板页面               ║")
+    print(f"║    GET  /api/state  JSON 状态快照             ║")
+    print(f"║    POST /approve    人工审批                   ║")
+    print(f"║    POST /approve-dag DAG 执行计划审批          ║")
+    print(f"║    GET  /health     健康检查                   ║")
     print(f"╚══════════════════════════════════════════╝")
     print(f"n8n 集成示例:")
     print(f"  HTTP Request 节点 -> POST http://{host}:{port}/run")
     print(f"  Body: {{\"task\": \"实现登录功能\", \"provider\": \"claude\"}}")
+    print(f"")
+    print(f"📊 实时看板: http://{host}:{port}/dashboard")
 
     try:
         server.serve_forever()

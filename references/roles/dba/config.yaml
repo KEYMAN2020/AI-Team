@@ -4,10 +4,11 @@ description: 数据库管理员 — Schema设计、SQL优化、数据建模
 aliases: []
 model_config:
   deepseek:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.1
-    thinking: true
+    thinking: false
     timeout: 300
+    text_tool_compat: true
   claude:
     model: claude-opus-4-20250514
     temperature: 0.1
@@ -23,7 +24,7 @@ model_config:
     temperature: 0.1
     timeout: 300
   any:
-    model: gpt-4o
+    model: gpt-5.5
     temperature: 0.1
     timeout: 300
 tools:

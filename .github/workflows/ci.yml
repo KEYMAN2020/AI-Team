@@ -1,0 +1,253 @@
+# =============================================================================
+# ci.yml — AI-TeaM 持续集成流水线
+# =============================================================================
+# 触发条件：
+#   - push 到 main/master/develop 分支
+#   - pull request 到 main/master 分支
+#   - 手动触发（workflow_dispatch）
+# =============================================================================
+# 流水线阶段：
+#   1. Lint（flake8 + black + isort）
+#   2. Test（pytest + coverage）
+#   3. Security（bandit + safety）
+#   4. Build（Docker 镜像构建 + 推送）
+#   5. Integration（集成测试，仅 main/master）
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - "LICENSE"
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: "运行测试"
+        type: boolean
+        default: true
+      run_lint:
+        description: "运行代码检查"
+        type: boolean
+        default: true
+      push_image:
+        description: "推送 Docker 镜像到仓库"
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  DOCKER_IMAGE_NAME: ai-team
+  REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  # ── 阶段 1: 代码质量检查 ──────────────────────────
+  lint:
+    name: "🔍 代码质量检查"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🐍 设置 Python ${{ env.PYTHON_VERSION }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: "📦 安装依赖"
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: "✅ Flake8 检查"
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: "✅ Black 格式检查"
+        run: |
+          black --check --diff . || echo "::warning::格式不符合 Black 规范，请运行: black ."
+
+      - name: "✅ Import 排序检查"
+        run: |
+          isort --check-only --diff . || echo "::warning::import 排序不规范，请运行: isort ."
+
+  # ── 阶段 2: 单元测试 ──────────────────────────────
+  test:
+    name: "🧪 单元测试"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🐍 设置 Python ${{ env.PYTHON_VERSION }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: "📦 安装依赖"
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pyyaml
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: "🧪 运行测试"
+        run: |
+          python -m pytest tests/ -v --cov=. --cov-report=term --cov-report=xml --junitxml=test-results.xml
+        continue-on-error: true
+
+      - name: "📤 上传测试报告"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results.xml
+            coverage.xml
+
+  # ── 阶段 3: 安全扫描 ──────────────────────────────
+  security:
+    name: "🔒 安全扫描"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🐍 设置 Python ${{ env.PYTHON_VERSION }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "📦 安装安全扫描工具"
+        run: |
+          pip install bandit safety
+
+      - name: "🔒 Bandit 安全扫描"
+        run: |
+          bandit -r . -f json -o bandit-report.json || true
+        continue-on-error: true
+
+      - name: "🔒 Safety 依赖漏洞检查"
+        run: |
+          safety check -r requirements.txt --full-report || true
+        continue-on-error: true
+
+      - name: "📤 上传安全报告"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+
+  # ── 阶段 4: Docker 镜像构建 ───────────────────────
+  build:
+    name: "🐳 Docker 镜像构建"
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 仅 push 或 workflow_dispatch 时构建镜像
+    if: >
+      github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🔑 登录 GitHub Container Registry"
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "🏷️ 生成镜像元数据"
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: "🐳 构建并推送 Docker 镜像"
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            AI_TEAM_VERSION=${{ github.sha }}
+
+      - name: "📤 上传镜像摘要"
+        if: always()
+        run: |
+          echo "## 🐳 Docker 镜像构建结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 属性 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| 镜像名 | \`${{ env.REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 标签 | \`${{ steps.meta.outputs.tags }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 提交 | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 分支 | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ── 阶段 5: 集成测试（仅 main/master）─────────────
+  integration:
+    name: "🔗 集成测试"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+      || (github.event_name == 'workflow_dispatch' && inputs.push_image == true)
+    steps:
+      - name: "📥 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "🐳 启动服务并测试"
+        run: |
+          # 使用 docker-compose 启动服务
+          docker compose -f docker-compose.yml up -d
+          
+          # 等待服务就绪
+          echo "等待服务就绪..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8123/health > /dev/null 2>&1; then
+              echo "✅ 健康检查通过"
+              break
+            fi
+            sleep 2
+          done
+          
+          # 运行集成测试
+          echo "运行集成测试..."
+          curl -s http://localhost:8123/health | python -c "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok'; print('✅ 集成测试通过')"
+          
+          # 清理
+          docker compose -f docker-compose.yml down

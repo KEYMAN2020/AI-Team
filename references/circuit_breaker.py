@@ -50,7 +50,10 @@ class CircuitBreaker:
             while self._failures and self._failures[0][0] < now - self.window:
                 self._failures.popleft()
             if len(self._failures) >= self.max_failures:
-                self._write_flag(role, error)
+                try:
+                    self._write_flag(role, error)
+                except OSError:
+                    pass  # 写入失败不阻塞主逻辑
 
     def record_success(self, role: str = ""):
         """记录一次成功，只清该角色的失败记录（不影响其他角色）。"""

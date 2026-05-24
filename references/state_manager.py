@@ -19,9 +19,27 @@ import json
 import shutil
 import hashlib
 import threading
+import io
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# ── Windows 子线程 stdout 编码修复 ──
+# 让所有 print() 调用在子线程中也能输出中文/emoji 而不崩溃
+if sys.platform == "win32":
+    try:
+        for _s in (sys.stdout, sys.stderr):
+            if hasattr(_s, "buffer") and _s is not None:
+                _replacement = io.TextIOWrapper(
+                    _s.buffer, encoding="utf-8", errors="replace"
+                )
+                if _s is sys.stdout:
+                    sys.stdout = _replacement
+                else:
+                    sys.stderr = _replacement
+    except Exception:
+        pass
 
 _write_lock = threading.Lock()  # 并发写入保护
 
@@ -34,6 +52,8 @@ SCHEMA_VER   = "2.0"
 
 # 每个角色最多保留多少条"热历史"（直接注入上下文的）
 HOT_WINDOW   = 3
+# 子 Agent 状态枚举（参照 Superpowers implementer status）
+SUB_AGENT_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 # 快照最多保留多少个（超出后删最旧的）
 MAX_SNAPS    = 30
 # 角色insights超过多少条时触发自动摘要
@@ -140,7 +160,8 @@ def _blank_role() -> dict:
     return {
         "last_active": None, "session_count": 0,
         "completed_tasks": [], "current_tasks": [],
-        "insights": [], "pending_followups": []
+        "insights": [], "pending_followups": [],
+        "context_version": 0,  # 每次完成自增，用于下游检测上游变更
     }
 
 
@@ -155,6 +176,21 @@ def get_project() -> dict:
 def get_role(role: str) -> dict:
     """返回指定角色的状态块。"""
     return _load_master()["roles"][role]
+
+def get_context_versions() -> dict[str, int]:
+    """返回所有角色的 context_version 映射，供下游 Agent 检测上游变更。
+    例如：{"pm": 3, "architect": 5, "backend": 2}"""
+    data = _load_master()
+    return {
+        role: rd.get("context_version", 0)
+        for role, rd in data["roles"].items()
+    }
+
+def get_context_version(role: str) -> int:
+    """返回指定角色的当前 context_version。"""
+    data = _load_master()
+    rd = data["roles"].get(role)
+    return rd.get("context_version", 0) if rd else 0
 
 def list_checkpoints() -> list:
     """返回所有快照记录（最新在后）。"""
@@ -182,15 +218,23 @@ def complete_task(
     task_summary: str,
     output_file: Optional[str],
     key_insights: Optional[list] = None,
+    sub_agent_status: str = "DONE",
 ) -> str:
     """
     角色完成任务后调用：
     - 将任务从 current_tasks 移入 completed_tasks（热层）
+    - 记录 sub_agent_status（DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED）
     - 追加 key_insights
     - 如果 insights 超出阈值，自动压缩为摘要（防膨胀）
     - 写前自动快照
     返回快照文件名。
     """
+    if sub_agent_status not in SUB_AGENT_STATUSES:
+        raise ValueError(
+            f"无效的子 Agent 状态 '{sub_agent_status}'，"
+            f"可选：{', '.join(SUB_AGENT_STATUSES)}"
+        )
+
     data  = _load_master()
     role_data = data["roles"][role]
 
@@ -202,10 +246,14 @@ def complete_task(
         "dispatch_id":  dispatch_id,
         "summary":      task_summary,
         "output_file":  output_file,
+        "sub_agent_status": sub_agent_status,
         "completed_at": _now(),
     })
     role_data["last_active"]   = _now()
     role_data["session_count"] += 1
+
+    # 版本自增 — 下游 Agent 通过 version 感知上游变更（防 Context Clash）
+    role_data["context_version"] = role_data.get("context_version", 0) + 1
 
     # 追加洞察
     for ins in (key_insights or []):
@@ -237,6 +285,32 @@ def mark_task_started(role: str, dispatch_id: str, task_desc: str) -> None:
     raw = json.dumps(data, ensure_ascii=False, indent=2)
     with _write_lock:
         MASTER_PATH.write_text(raw, encoding="utf-8")
+
+def mark_task_blocked(
+    role: str,
+    dispatch_id: str,
+    reason: str,
+) -> None:
+    """将当前任务标记为 BLOCKED（无需快照，只更新 status 字段）。"""
+    data = _load_master()
+    for t in data["roles"][role]["current_tasks"]:
+        if t.get("dispatch_id") == dispatch_id:
+            t["sub_agent_status"] = "BLOCKED"
+            t["block_reason"] = reason
+            break
+    raw = json.dumps(data, ensure_ascii=False, indent=2)
+    with _write_lock:
+        MASTER_PATH.write_text(raw, encoding="utf-8")
+
+def get_blocked_tasks() -> list[dict]:
+    """返回所有角色中标记为 BLOCKED 的当前任务。"""
+    data = _load_master()
+    blocked = []
+    for role, rd in data["roles"].items():
+        for t in rd.get("current_tasks", []):
+            if t.get("sub_agent_status") == "BLOCKED":
+                blocked.append({"role": role, **t})
+    return blocked
 
 
 # ═══════════════════════════════════════════════════════
@@ -378,11 +452,15 @@ def build_context(role: str, task: str) -> str:
     if decisions:
         dec_text = "\n近期决策：" + "；".join(d["decision"] for d in decisions)
 
+    # 上下文版本快照 — 所有角色的最新版本号
+    all_versions = {r: rd.get("context_version", 0) for r, rd in data["roles"].items()}
+
     warm = (
         f"项目名称：{proj['name']}（ID：{proj['id']}）\n"
         f"当前进度：{proj['overall_progress']}% | 阶段：{proj['current_phase']}\n"
         f"下一步行动：{proj['next_action'] or '待 PM 决定'}"
         f"{dec_text}\n"
+        f"上下文版本快照：{all_versions}\n"
         f"团队备注：{proj.get('team_notes') or '无'}"
     )
 
@@ -467,17 +545,7 @@ def migrate_state(old_state_dir: str = "state") -> None:
         print("找不到 v1 的 project_state.json，跳过迁移。")
         return
 
-    with open(proj_file, encoding="utf-8") as f:
-        old_proj = json.load(f)
-
-    proj_id   = old_proj.get("project_id") or f"proj_migrated_{datetime.now().strftime('%Y%m%d')}"
-    proj_name = old_proj.get("project_name", "迁移项目")
-
-    master = _blank_master(proj_id, proj_name)
-    master["project"].update({
-        k: v for k, v in old_proj.items()
-        if k in master["project"] and v is not None
-    })
+    master = _load_old_project_state(proj_file)
 
     ROLE_FILE_MAP = {
         "pm": "pm_state.json", "researcher": "researcher_state.json",
@@ -486,26 +554,45 @@ def migrate_state(old_state_dir: str = "state") -> None:
         "marketer": "marketer_state.json", "designer": "designer_state.json",
         "tester": "tester_state.json",
     }
-    for role, fname in ROLE_FILE_MAP.items():
-        fp = old / fname
-        if fp.exists():
-            with open(fp, encoding="utf-8") as f:
-                old_role = json.load(f)
-            for task in old_role.get("completed_tasks", []):
-                master["roles"][role]["completed_tasks"].append({
-                    "dispatch_id":  task.get("task_id", "legacy"),
-                    "summary":      task.get("description", task.get("task", "")),
-                    "output_file":  task.get("output_file"),
-                    "completed_at": task.get("completed_at"),
-                })
-            for ins in old_role.get("knowledge_base", {}).get("accumulated_insights", []):
-                master["roles"][role]["insights"].append({"text": ins, "ts": None})
-            shutil.copy2(fp, backup_dir / fname)
+    _migrate_role_data(old, backup_dir, master, ROLE_FILE_MAP)
 
     shutil.copy2(proj_file, backup_dir / "project_state.json")
-
     MASTER_PATH.write_text(json.dumps(master, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"✅ 迁移完成。原始文件备份在 {backup_dir}。请验证 state/master.json 后删除旧文件。")
+
+
+def _load_old_project_state(proj_file: Path) -> dict:
+    """加载旧版 project_state.json 并构建 master 骨架。"""
+    with open(proj_file, encoding="utf-8") as f:
+        old_proj = json.load(f)
+    proj_id = old_proj.get("project_id") or f"proj_migrated_{datetime.now().strftime('%Y%m%d')}"
+    proj_name = old_proj.get("project_name", "迁移项目")
+    master = _blank_master(proj_id, proj_name)
+    master["project"].update({
+        k: v for k, v in old_proj.items()
+        if k in master["project"] and v is not None
+    })
+    return master
+
+
+def _migrate_role_data(old: Path, backup_dir: Path, master: dict, role_file_map: dict):
+    """从旧版角色状态文件迁移 completed_tasks 和 insights 到 master。"""
+    for role, fname in role_file_map.items():
+        fp = old / fname
+        if not fp.exists():
+            continue
+        with open(fp, encoding="utf-8") as f:
+            old_role = json.load(f)
+        for task in old_role.get("completed_tasks", []):
+            master["roles"][role]["completed_tasks"].append({
+                "dispatch_id":  task.get("task_id", "legacy"),
+                "summary":      task.get("description", task.get("task", "")),
+                "output_file":  task.get("output_file"),
+                "completed_at": task.get("completed_at"),
+            })
+        for ins in old_role.get("knowledge_base", {}).get("accumulated_insights", []):
+            master["roles"][role]["insights"].append({"text": ins, "ts": None})
+        shutil.copy2(fp, backup_dir / fname)
 
 
 # ═══════════════════════════════════════════════════════

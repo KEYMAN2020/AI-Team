@@ -43,32 +43,40 @@ from typing import Optional
 # Force UTF-8 on Windows to avoid GBK encoding errors with emoji
 if sys.platform == "win32":
     import io
-    if hasattr(sys.stdout, "buffer"):
+    # Guard against double-wrapping: if another module (e.g. server.py) already
+    # replaced sys.stdout with a TextIOWrapper, re-wrapping its .buffer would
+    # fail with "I/O operation on closed file".  Check for idempotency.
+    if hasattr(sys.stdout, "buffer") and not isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    if hasattr(sys.stderr, "buffer"):
+    if hasattr(sys.stderr, "buffer") and not isinstance(sys.stderr, io.TextIOWrapper):
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+# Safe print – prevents "I/O operation on closed file" crash when asyncio
+# closes stdout/stderr on Windows (ProactorEventLoop issue)
+import builtins as _builtins
+_orig_print = _builtins.print
+def _safe_print(*a, **kw):
+    try: _orig_print(*a, **kw)
+    except (ValueError, OSError): pass
+_builtins.print = _safe_print
+
+# Safe stderr handler – catches ValueError when stderr is closed in subprocess/asyncio
+class _SafeStderrHandler(logging.StreamHandler):
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except (ValueError, OSError):
+            pass
 
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stderr)],
+    handlers=[_SafeStderrHandler(sys.stderr)],
 )
 logger = logging.getLogger("runner")
 
 sys.path.insert(0, str(Path(__file__).parent))
-
-# Auto-load .env file (relative to project root)
-_env_file = Path(__file__).resolve().parent.parent / ".env"
-if _env_file.exists():
-    with open(_env_file, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                v = v.strip().strip('"').strip("'")
-                if k.strip() not in os.environ:
-                    os.environ[k.strip()] = v
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent  # ai-team/
 
@@ -84,6 +92,7 @@ from resource_library  import build_library_context, init_resource_library
 from doc_generator     import generate_all_docs
 from logger            import init_logger, get_logger
 from role_registry     import get_all_roles as _get_all_roles_from_registry
+from event_bus         import emit as _emit_event  # SSE 实时推送
 
 # ── 配置（优先从 config/workflow.yaml 读取，有硬编码 fallback）─
 try:
@@ -142,6 +151,8 @@ async def run_agent(
              phase="executing", summary=task[:80])
 
     logger.info(f"  → [{task_id}] {role.upper()} 开始：{task[:40]}")
+    _emit_event("role_started", {"role": role, "task_id": task_id,
+                                  "task": task[:200], "summary": task[:120]})
 
     # 收集上游依赖的输出，注入到任务描述
     upstream_ctx = _collect_upstream(task_node, results, bus)
@@ -156,6 +167,10 @@ async def run_agent(
 
             slog.log("info", "task_completed", role=role, dispatch_id=task_id,
                      phase="executing", summary=result.get("summary", "")[:120])
+
+            _emit_event("role_completed", {"role": role, "task_id": task_id,
+                                            "summary": result.get("summary", "")[:200],
+                                            "output_file": result.get("output_file")})
 
             # 把结果发到消息总线（让其他 Agent 可以订阅）
             await bus.post(role, "pm", RESULT,
@@ -178,6 +193,8 @@ async def run_agent(
             if attempt == retries:
                 slog.log("error", "task_timeout", role=role, dispatch_id=task_id,
                          phase="executing", error=f"timeout after {timeout}s")
+                _emit_event("role_error", {"role": role, "task_id": task_id,
+                                            "error": f"超时 {timeout}s"})
                 return {"id": task_id, "role": role, "status": "timeout", "output": ""}
 
         except Exception as e:
@@ -186,6 +203,7 @@ async def run_agent(
             if attempt == retries:
                 slog.log("error", "task_failed", role=role, dispatch_id=task_id,
                          phase="executing", error=str(e))
+                _emit_event("role_error", {"role": role, "task_id": task_id, "error": str(e)})
                 return {"id": task_id, "role": role, "status": "error",
                         "output": "", "error": str(e)}
             await asyncio.sleep(2 ** attempt)  # 指数退避
@@ -208,7 +226,8 @@ async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider, de
 
     mark_task_started(role, task_id, task)
 
-    system  = load_system_prompt(role)
+    # Tool Loadout：把任务描述传给 build_tools_prompt，让系统根据任务关键词动态筛选工具
+    system  = load_system_prompt(role, task_context=full_task)
     context = build_context(role, full_task)
 
     # 注入知识库（ADR、gotchas、规范）和技术储备库（最佳实践）
@@ -357,89 +376,22 @@ async def run_dag(
     bus     = get_bus()
     results = {}
     skip    = skip_tasks or set()
-    failed_ids = set()  # 追踪失败的任务 ID，用于阻断下游
+    failed_ids = set()
 
     total_tasks = sum(len(tier) for tier in dag)
-    done_tasks  = 0
 
     logger.info(f"\n  DAG 执行开始：{len(dag)} 层，共 {total_tasks} 个任务"
                 + (f"（{len(skip)} 个已跳过）" if skip else ""))
     logger.info(f"  {'─'*50}")
 
     for tier_idx, tier in enumerate(dag):
-        # 过滤掉已完成的 task（断点续跑）
-        active_nodes = []
-        skipped_results = {}
-        for node in tier:
-            if node["id"] in skip:
-                from state_manager import get_role
-                role_state = get_role(node["role"])
-                last = role_state["completed_tasks"][-1] if role_state.get("completed_tasks") else None
-                skipped_results[node["id"]] = {
-                    "id": node["id"], "role": node["role"], "status": "done",
-                    "output": f"(恢复：崩溃前已完成 {node['id']})",
-                    "summary": last["summary"] if last else "已恢复",
-                    "snap": _latest_snap(node["id"]),
-                }
-                logger.info(f"  ↻ [{node['id']}] {node['role'].upper()} 跳过（崩溃前已完成）")
-            elif set(node.get("depends_on", [])) & failed_ids:
-                # 上游关键任务失败，阻断本任务
-                blocked_by = set(node.get("depends_on", [])) & failed_ids
-                results[node["id"]] = {
-                    "id": node["id"], "role": node["role"],
-                    "status": "blocked", "output": "",
-                    "error": f"上游任务失败，依赖未满足：{sorted(blocked_by)}"
-                }
-                logger.warning(f"  ⊘ [{node['id']}] {node['role'].upper()} 阻断"
-                               f"（上游失败：{sorted(blocked_by)}）")
-            else:
-                active_nodes.append(node)
-
+        active_nodes, skipped_results = _filter_dag_tier(tier, skip, failed_ids, results)
         if not active_nodes:
             results.update(skipped_results)
             continue
-
-        logger.info(f"\n  [第 {tier_idx+1} 层] 并行执行 {len(active_nodes)} 个任务")
-
-        # 并行执行本层所有任务（使用角色独立超时）
-        tier_tasks = [
-            run_agent(node, results, bus,
-                      timeout=get_role_timeout(node["role"], provider),
-                      provider=provider)
-            for node in active_nodes
-        ]
-        tier_results = await asyncio.gather(*tier_tasks, return_exceptions=True)
-
         results.update(skipped_results)
-
-        # 收集结果，追踪失败
-        for node, res in zip(active_nodes, tier_results):
-            if isinstance(res, Exception):
-                logger.error(f"  ✗ [{node['id']}] 异常：{res}")
-                results[node["id"]] = {
-                    "id": node["id"], "role": node["role"],
-                    "status": "exception", "output": "", "error": str(res)
-                }
-                failed_ids.add(node["id"])
-            else:
-                results[node["id"]] = res
-                if res.get("status") not in ("done",):
-                    failed_ids.add(node["id"])
-            done_tasks += 1
-
-        # 本层完成后的回调（可用于更新项目状态）
-        if on_tier_complete:
-            await on_tier_complete(tier_idx, tier, results)
-
-        # 统计本层失败
-        tier_failed = [r for r in tier_results
-                       if isinstance(r, dict) and r.get("status") not in ("done",)]
-        if tier_failed:
-            failed_names = [f"{n['id']}({n['role']})" for n, r in zip(active_nodes, tier_results)
-                           if isinstance(r, dict) and r.get("status") not in ("done",)]
-            logger.warning(f"\n  ⚠ 第 {tier_idx+1} 层有 {len(tier_failed)} 个任务失败：{', '.join(failed_names)}")
-            if failed_ids:
-                logger.warning(f"  下游依赖 {sorted(failed_ids)} 的任务将被自动阻断")
+        await _execute_dag_tier(tier_idx, tier, active_nodes, results,
+                                failed_ids, bus, provider, on_tier_complete, dag)
 
     logger.info(f"\n  {'─'*50}")
     done  = sum(1 for r in results.values() if r.get("status") == "done")
@@ -447,6 +399,84 @@ async def run_dag(
     logger.info(f"  DAG 执行完成：{done}/{total} 成功\n")
 
     return results
+
+
+def _filter_dag_tier(tier: list[dict], skip: set, failed_ids: set,
+                     results: dict) -> tuple[list[dict], dict]:
+    """过滤 DAG 某一层：跳过已完成任务、阻断依赖失败的上游。"""
+    active_nodes = []
+    skipped_results = {}
+    for node in tier:
+        if node["id"] in skip:
+            from state_manager import get_role
+            role_state = get_role(node["role"])
+            last = (role_state["completed_tasks"][-1]
+                    if role_state.get("completed_tasks") else None)
+            skipped_results[node["id"]] = {
+                "id": node["id"], "role": node["role"], "status": "done",
+                "output": f"(恢复：崩溃前已完成 {node['id']})",
+                "summary": last["summary"] if last else "已恢复",
+                "snap": _latest_snap(node["id"]),
+            }
+            logger.info(f"  ↻ [{node['id']}] {node['role'].upper()} 跳过（崩溃前已完成）")
+            _emit_event("role_skipped", {"role": node["role"], "task_id": node["id"],
+                                          "summary": "断点恢复：崩溃前已完成"})
+        elif set(node.get("depends_on", [])) & failed_ids:
+            blocked_by = set(node.get("depends_on", [])) & failed_ids
+            results[node["id"]] = {
+                "id": node["id"], "role": node["role"],
+                "status": "blocked", "output": "",
+                "error": f"上游任务失败，依赖未满足：{sorted(blocked_by)}"
+            }
+            logger.warning(f"  ⊘ [{node['id']}] {node['role'].upper()} 阻断"
+                           f"（上游失败：{sorted(blocked_by)}）")
+        else:
+            active_nodes.append(node)
+    return active_nodes, skipped_results
+
+
+async def _execute_dag_tier(tier_idx, tier, active_nodes, results,
+                             failed_ids, bus, provider, on_tier_complete, dag):
+    """并行执行 DAG 某一层的所有任务并处理结果。"""
+    logger.info(f"\n  [第 {tier_idx+1} 层] 并行执行 {len(active_nodes)} 个任务")
+
+    tier_tasks = [
+        run_agent(node, results, bus,
+                  timeout=get_role_timeout(node["role"], provider),
+                  provider=provider)
+        for node in active_nodes
+    ]
+    tier_results = await asyncio.gather(*tier_tasks, return_exceptions=True)
+
+    for node, res in zip(active_nodes, tier_results):
+        if isinstance(res, Exception):
+            logger.error(f"  ✗ [{node['id']}] 异常：{res}")
+            results[node["id"]] = {
+                "id": node["id"], "role": node["role"],
+                "status": "exception", "output": "", "error": str(res)
+            }
+            failed_ids.add(node["id"])
+        else:
+            results[node["id"]] = res
+            if res.get("status") not in ("done",):
+                failed_ids.add(node["id"])
+
+    if on_tier_complete:
+        await on_tier_complete(tier_idx, tier, results)
+
+    done_count = sum(1 for n in active_nodes
+                     if results.get(n["id"], {}).get("status") == "done")
+    _emit_event("tier_complete", {"tier": tier_idx + 1, "total_tiers": len(dag),
+                                   "done_in_tier": done_count, "total_in_tier": len(active_nodes)})
+
+    tier_failed = [r for r in tier_results
+                   if isinstance(r, dict) and r.get("status") not in ("done",)]
+    if tier_failed:
+        fnames = [f"{n['id']}({n['role']})" for n, r in zip(active_nodes, tier_results)
+                  if isinstance(r, dict) and r.get("status") not in ("done",)]
+        logger.warning(f"\n  ⚠ 第 {tier_idx+1} 层有 {len(tier_failed)} 个失败：{', '.join(fnames)}")
+        if failed_ids:
+            logger.warning(f"  下游依赖 {sorted(failed_ids)} 的任务将被自动阻断")
 
 
 # ═══════════════════════════════════════════════════
@@ -465,81 +495,98 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
 
     支持断点续跑：已完成的 task 会自动跳过（基于快照检测）。
     """
+    pid = _init_project_session(user_task)
+    dag = await _run_pm_planning_phase(user_task, provider)
+    all_results = await _run_dag_execution_phase(dag, provider, pid)
+    await _run_qa_debug_loop(all_results)
+    _run_api_doc_generation()
+    final_output = await _run_integration_phase(all_results, user_task, provider)
+    _report_token_usage(pid)
+    return final_output
+
+
+def _init_project_session(user_task: str) -> str:
+    """初始化项目会话：重置状态、加载知识库、初始化日志。"""
     bus = get_bus()
     reset_token_usage()
-    init_knowledge_base()    # 项目知识库
-    init_resource_library()  # 技术知识储备库
-
-    # 初始化结构化日志（用项目名做 project_id）
+    init_knowledge_base()
+    init_resource_library()
+    pid = ""
     try:
         proj = get_project()
         pid = proj.get("name", "").replace(" ", "_")[:40] if proj else ""
     except Exception:
-        pid = ""
+        pass
     if not pid:
         from datetime import datetime as _dt
         pid = f"proj_{_dt.now().strftime('%Y%m%d_%H%M')}"
     init_logger(pid)
-    slog = get_logger()
-    slog.log("info", "project_started", phase="planning",
-             summary=user_task[:120])
+    get_logger().log("info", "project_started", phase="planning", summary=user_task[:120])
+    _emit_event("project_initialized", {"project_name": pid, "task": user_task[:120]})
+    return pid
 
-    # ── Step 1：PM 规划 ──────────────────────────────
-    # 检查是否为断点续跑：已有快照则跳过重新规划
+
+async def _run_pm_planning_phase(user_task: str, provider: Optional[str]) -> list:
+    """PM 规划 DAG + 人工审批。支持断点续跑跳过此阶段。"""
     pending_from_crash = _find_completed_tasks_from_snapshots()
-
     if pending_from_crash:
         logger.info(f"\n  [恢复] 检测到未完成的项目，跳过 PM 重规划（{len(pending_from_crash)} 个任务已完成）")
+        return _load_default_dag(user_task)
+
+    logger.info("  [PM] 规划任务...")
+    mark_task_started("pm", "D000", user_task)
+    context = build_context("pm", user_task)
+    pm_plan = await asyncio.get_running_loop().run_in_executor(
+        None, call_role, "pm", load_system_prompt("pm"), context, provider
+    )
+    parse_state_update("pm", "D000", pm_plan)
+    dag = _extract_dag(pm_plan, user_task)
+
+    dag_issues = _validate_dag(dag)
+    if dag_issues:
+        logger.warning("  [校验] DAG 存在问题，使用默认流程：")
+        for issue in dag_issues:
+            logger.warning(f"    - {issue}")
         dag = _load_default_dag(user_task)
-    else:
-        logger.info("  [PM] 规划任务...")
-        mark_task_started("pm", "D000", user_task)
-        context    = build_context("pm", user_task)
-        pm_plan    = await asyncio.get_running_loop().run_in_executor(
-            None, call_role, "pm", load_system_prompt("pm"), context, provider
+
+    approved = await _request_dag_approval(dag)
+    if not approved:
+        logger.info("  [PM] 重新规划（用户驳回了 DAG）...")
+        pm_plan = await asyncio.get_event_loop().run_in_executor(
+            None, call_role, "pm", load_system_prompt("pm"),
+            f"{user_task}\n\n【以上方案被驳回，请重新规划 DAG，避免重复之前的方案】", provider
         )
-        parse_state_update("pm", "D000", pm_plan)
-
-        # 从 PM 输出中提取 DAG（或用默认流程）
+        parse_state_update("pm", "D_replan", pm_plan)
         dag = _extract_dag(pm_plan, user_task)
+        logger.info(_format_dag_preview(dag))
+    return dag
 
-        # ── Step 1.4：DAG 校验 ──────────────────────
-        dag_issues = _validate_dag(dag)
-        if dag_issues:
-            logger.warning("  [校验] DAG 存在问题，使用默认流程：")
-            for issue in dag_issues:
-                logger.warning(f"    - {issue}")
-            dag = _load_default_dag(user_task)
 
-        # ── Step 1.5：DAG 预览 & 确认 ────────────────
-        approved = await _request_dag_approval(dag)
-        if not approved:
-            logger.info("  [PM] 重新规划（用户驳回了 DAG）...")
-            pm_plan = await asyncio.get_event_loop().run_in_executor(
-                None, call_role, "pm", load_system_prompt("pm"),
-                f"{user_task}\n\n【以上方案被驳回，请重新规划 DAG，避免重复之前的方案】", provider
-            )
-            parse_state_update("pm", "D_replan", pm_plan)
-            dag = _extract_dag(pm_plan, user_task)
-            logger.info(_format_dag_preview(dag))
-
-    # ── Step 2：并行执行 DAG（断点续跑：跳过已完成 task） ──
+async def _run_dag_execution_phase(dag: list, provider: Optional[str],
+                                    pid: str) -> dict:
+    """执行 DAG 所有层，跳过已完成的 task。"""
+    slog = get_logger()
     slog.log("info", "phase_change", phase="executing", summary="DAG 执行开始")
+    _emit_event("phase_change", {"phase": "executing", "summary": "DAG 执行开始",
+                                  "total_tiers": len(dag)})
     completed = _find_completed_tasks_from_snapshots()
 
     async def on_tier_done(tier_idx, tier, results):
         done = sum(1 for r in results.values() if r.get("status") == "done")
-        update_project({
-            "overall_progress": int(done / max(sum(len(t) for t in dag), 1) * 60),
-            "current_phase":    f"第 {tier_idx+1} 层执行中",
-        })
+        total = sum(len(t) for t in dag)
+        progress = int(done / max(total, 1) * 60)
+        phase_text = f"第 {tier_idx+1} 层执行中"
+        update_project({"overall_progress": progress, "current_phase": phase_text})
+        _emit_event("progress", {"progress": progress, "phase": phase_text,
+                                  "done": done, "total": total})
 
-    all_results = await run_dag(dag, provider=provider,
-                                on_tier_complete=on_tier_done,
-                                skip_tasks=completed)
+    return await run_dag(dag, provider=provider,
+                         on_tier_complete=on_tier_done,
+                         skip_tasks=completed)
 
-    # ── Step 3：QA→DBG→QA 循环 ──────────────────────
-    # 找 DAG 中最后一个 tester 角色的输出
+
+async def _run_qa_debug_loop(all_results: dict):
+    """QA→DBG→QA 循环：Tester 发现 Bug → Debug 修复 → Tester 回归。"""
     qa_iteration = 0
     last_tester_id = None
     for r in sorted(all_results.values(), key=lambda x: x.get("id", "")):
@@ -559,38 +606,38 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
 
         debug_id = f"DBG_{qa_iteration}"
         retest_id = f"RETEST_{qa_iteration}"
-        mini_dag = [
-            [{"role": "debug",  "task": f"修复以下测试发现的 Bug：\n{bug_output}", "id": debug_id}],
-            [{"role": "tester", "task": "回归测试，验证 Bug 是否已修复",           "id": retest_id,
-              "depends_on": [debug_id]}],
-        ]
-        mini_results = await run_dag(mini_dag, provider=provider)
+        mini_dag = [[{"role": "debug",  "task": f"修复以下测试发现的 Bug：\n{bug_output}", "id": debug_id}],
+                    [{"role": "tester", "task": "回归测试，验证 Bug 是否已修复", "id": retest_id,
+                      "depends_on": [debug_id]}]]
+        mini_results = await run_dag(mini_dag)
         all_results.update(mini_results)
         last_tester_id = retest_id
 
-    # 达到上限仍有 Bug → 升级给人
     if qa_iteration == QA_DBG_MAX_ITER and _tester_found_bugs(all_results.get(last_tester_id, {})):
         logger.warning(f"\n  ⚠ [QA↺{QA_DBG_MAX_ITER}] 已达上限，Bug 仍未修复，记录到知识库")
         try:
             from knowledge_base import add_gotcha
-            add_gotcha(
-                title=f"QA→DBG 循环达上限（{QA_DBG_MAX_ITER} 轮）未修复",
-                symptom="自动修复无法通过的测试用例",
-                cause="需人工介入分析",
-                solution="请人工排查并修复",
-                affected_roles=["debug", "tester"],
-            )
+            add_gotcha(title=f"QA→DBG 循环达上限（{QA_DBG_MAX_ITER} 轮）未修复",
+                       symptom="自动修复无法通过的测试用例",
+                       cause="需人工介入分析", solution="请人工排查并修复",
+                       affected_roles=["debug", "tester"])
         except Exception:
             pass
 
-    # ── Step 3.5：生成 API 文档 ──────────────────────
+
+def _run_api_doc_generation():
+    """生成 API 文档（非致命，失败不影响主流程）。"""
     try:
         doc_results = generate_all_docs()
         logger.info(f"  [文档] API 文档已生成：{', '.join(doc_results.values())}")
     except Exception as e:
         logger.warning(f"  [文档] 生成 API 文档失败（非致命）：{e}")
 
-    # ── Step 4：PM 整合 ──────────────────────────────
+
+async def _run_integration_phase(all_results: dict, user_task: str,
+                                  provider: Optional[str]) -> str:
+    """PM 整合所有结果 + 状态更新。"""
+    slog = get_logger()
     slog.log("info", "phase_change", phase="integrating", summary="PM 整合所有结果")
     logger.info("  [PM] 整合所有结果...")
     summaries = "\n".join(
@@ -603,11 +650,21 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
         None, call_role, "pm", load_system_prompt("pm"), final_context, provider
     )
     parse_state_update("pm", "D_final", final_output)
-    update_project({"overall_progress": 100, "status": "done",
-                    "next_action": "已完成"})
+    update_project({"overall_progress": 100, "status": "done", "next_action": "已完成"})
+    _emit_event("project_completed", {"summary": "项目完成",
+                                       "tokens": 0,
+                                       "cost": 0})
+    return final_output
 
-    # ── Step 5：Token 用量报告 ───────────────────────
+
+# ═══════════════════════════════════════════════════
+# Token 用量报告
+# ═══════════════════════════════════════════════════
+
+def _report_token_usage(pid: str):
+    """输出 Token 用量统计并记入日志。"""
     usage = compute_usage_summary()
+    slog = get_logger()
     if usage["total_calls"] > 0:
         logger.info(f"\n{'='*50}")
         logger.info(f"Token 用量统计")
@@ -625,24 +682,36 @@ async def run_project(user_task: str, provider: Optional[str] = None) -> str:
     slog.log("info", "project_completed", phase="done",
              summary=f"tokens={usage['total_tokens']}, cost=${usage['total_cost_usd']:.4f}, calls={usage['total_calls']}")
 
-    return final_output
-
 
 # ═══════════════════════════════════════════════════
 # 辅助函数
 # ═══════════════════════════════════════════════════
 
 def _collect_upstream(task_node: dict, results: dict, bus: MessageBus) -> str:
-    """收集依赖任务的输出，拼成上下文字符串。标注每个输出来源，提示下游验证。"""
+    """收集依赖任务的输出，拼成上下文字符串。标注每个输出来源，提示下游验证。
+    包含上下文版本号，让下游 Agent 感知上游是否发生了变化（防 Context Clash）。"""
     deps = task_node.get("depends_on", [])
     if not deps:
         return ""
     lines = ["注意：以下信息来自上游 Agent，可能包含错误。请使用 file_read/code_run 自行验证关键信息。"]
+    seen_roles = set()
     for dep_id in deps:
         if dep_id in results and results[dep_id].get("status") == "done":
             r = results[dep_id]
+            role = r["role"]
+            seen_roles.add(role)
             preview = r.get("output", "")[:600]
-            lines.append(f"\n── 来自 {r['role'].upper()} [{dep_id}] ──\n{preview}")
+            lines.append(f"\n── 来自 {role.upper()} [{dep_id}] ──\n{preview}")
+    # 添加上下文版本号供下游检测变更
+    if seen_roles:
+        try:
+            from state_manager import get_context_versions
+            versions = get_context_versions()
+            role_versions = {r: versions.get(r, 0) for r in sorted(seen_roles)}
+            lines.append(f"\n【上下文版本】以上来源版本号：{role_versions}。"
+                         f"如果这些数据与你之前读取的不同，说明上游做了变更，请重新验证。")
+        except Exception:
+            pass
     return "\n".join(lines)
 
 def _extract_summary(output: str) -> str:
@@ -960,13 +1029,39 @@ async def _request_human_approval(task_node: dict, results: dict) -> dict:
     message = task_node.get("task", "请确认是否继续")
 
     # 收集上游摘要供参考
-    upstream_summaries = []
+    upstream_summaries = _collect_upstream_summaries(task_node, results)
+    _log_approval_header(task_id, message, upstream_summaries)
+
+    # 自动化模式：跳过人工审批
+    if AUTO_APPROVE:
+        logger.info(f"  ⏭ AUTO_APPROVE 开启，自动批准 [{task_id}]")
+        return _build_approval_result(task_id, True, "自动批准（AUTO_APPROVE=True）", "自动批准")
+
+    # HTTP 模式 vs CLI 模式
+    if not sys.stdin.isatty():
+        approved, notes = await _http_approval_flow(task_id)
+    else:
+        approved, notes = _cli_approval_flow()
+
+    # 记录决策
+    _record_approval_decision(task_id, approved, notes)
+    status = "done" if approved else "blocked"
+    return _build_approval_result(task_id, approved,
+                                  f"人工审批：{'批准' if approved else '中止'}。备注：{notes}",
+                                  f"{'批准' if approved else '中止'} — {notes or '无备注'}")
+
+
+def _collect_upstream_summaries(task_node: dict, results: dict) -> list[str]:
+    """收集上游节点摘要供审批参考。"""
+    summaries = []
     for dep_id in task_node.get("depends_on", []):
         if dep_id in results and results[dep_id].get("status") == "done":
-            upstream_summaries.append(
-                f"  [{dep_id}] {results[dep_id].get('summary', '')}"
-            )
+            summaries.append(f"  [{dep_id}] {results[dep_id].get('summary', '')}")
+    return summaries
 
+
+def _log_approval_header(task_id: str, message: str, upstream_summaries: list):
+    """打印审批节点头部信息。"""
     logger.info("人工审批: %s — %s", task_id, message)
     logger.info(f"\n{'='*60}")
     logger.info(f"[人工审批节点] {task_id}")
@@ -975,63 +1070,65 @@ async def _request_human_approval(task_node: dict, results: dict) -> dict:
         logger.info(f"上游完成情况：\n" + "\n".join(upstream_summaries))
     logger.info(f"{'='*60}")
 
-    # 自动化模式：跳过人工审批
-    if AUTO_APPROVE:
-        logger.info(f"  ⏭ AUTO_APPROVE 开启，自动批准 [{task_id}]")
-        return {"id": task_id, "role": "_approval", "status": "done",
-                "output": "自动批准（AUTO_APPROVE=True）", "summary": "自动批准"}
 
-    # ── HTTP 模式：两阶段文件轮询 ──────────────────
-    if not sys.stdin.isatty():
-        approval_dir = PROJECT_ROOT / "state"
-        ack_file     = approval_dir / "_approval_ack.json"
-        decision_file = approval_dir / "_approval_response.json"
-        poll = 5
+async def _http_approval_flow(task_id: str) -> tuple:
+    """
+    两阶段 HTTP 文件轮询审批流程。
+    阶段一：等待用户确认已看到（无超时）
+    阶段二：确认后开始计时，等待批准/拒绝决定
+    """
+    approval_dir = PROJECT_ROOT / "state"
+    ack_file = approval_dir / "_approval_ack.json"
+    decision_file = approval_dir / "_approval_response.json"
+    poll = 5
 
-        # 阶段一：等待用户确认已看到（无超时）
-        logger.info("  ⏳ 等待你确认已看到审批内容（POST /approve {status: \"reviewing\"}）...")
-        while True:
-            if ack_file.exists():
-                try:
-                    ack = json.loads(ack_file.read_text(encoding="utf-8"))
-                    ack_file.unlink()
-                    logger.info(f"  → 已确认：{ack.get('notes', '开始审查')}")
-                    break
-                except (json.JSONDecodeError, KeyError):
-                    ack_file.unlink()
-            await asyncio.sleep(poll)
+    # 阶段一：等待确认
+    logger.info('  ⏳ 等待你确认已看到审批内容（POST /approve {status: "reviewing"}）...')
+    while True:
+        if ack_file.exists():
+            try:
+                ack = json.loads(ack_file.read_text(encoding="utf-8"))
+                ack_file.unlink()
+                logger.info(f"  → 已确认：{ack.get('notes', '开始审查')}")
+                break
+            except (json.JSONDecodeError, KeyError):
+                ack_file.unlink()
+        await asyncio.sleep(poll)
 
-        # 阶段二：确认后开始计时，等待决定
-        max_wait = 3600
-        waited = 0
-        logger.info(f"  ⏱ 计时开始（{max_wait}s 内需做出决定）")
-        while waited < max_wait:
-            if decision_file.exists():
-                try:
-                    decision = json.loads(decision_file.read_text(encoding="utf-8"))
-                    decision_file.unlink()
-                    approved = decision.get("approved", False)
-                    notes = decision.get("notes", "")
-                    logger.info(f"  → 审批结果：{'批准' if approved else '拒绝'} — {notes}")
-                    break
-                except (json.JSONDecodeError, KeyError):
-                    decision_file.unlink()
-            await asyncio.sleep(poll)
-            waited += poll
-        else:
-            logger.warning(f"  ⏱ [{task_id}] 审批超时（{max_wait}s），自动拒绝")
-            approved = False
-            notes = "审批超时，自动拒绝"
+    # 阶段二：等待决定（3600s 超时）
+    max_wait = 3600
+    waited = 0
+    logger.info(f"  ⏱ 计时开始（{max_wait}s 内需做出决定）")
+    while waited < max_wait:
+        if decision_file.exists():
+            try:
+                decision = json.loads(decision_file.read_text(encoding="utf-8"))
+                decision_file.unlink()
+                approved = decision.get("approved", False)
+                notes = decision.get("notes", "")
+                logger.info(f"  → 审批结果：{'批准' if approved else '拒绝'} — {notes}")
+                return approved, notes
+            except (json.JSONDecodeError, KeyError):
+                decision_file.unlink()
+        await asyncio.sleep(poll)
+        waited += poll
 
-    # ── CLI 模式：交互式输入 ────────────────────────
-    else:
-        response = input("批准继续？(y=批准 / n=中止 / s=跳过此检查) → ").strip().lower()
-        approved = response in ("y", "yes", "s", "")
-        if response == "n":
-            logger.info("  → 已中止。可修改后重新运行，或 rollback_to_snap() 回退。")
-        notes = input("备注（可选，直接回车跳过）→ ").strip() or ""
+    logger.warning(f"  ⏱ [{task_id}] 审批超时（{max_wait}s），自动拒绝")
+    return False, "审批超时，自动拒绝"
 
-    # 更新项目状态
+
+def _cli_approval_flow() -> tuple:
+    """CLI 交互式审批流程。"""
+    response = input("批准继续？(y=批准 / n=中止 / s=跳过此检查) → ").strip().lower()
+    approved = response in ("y", "yes", "s", "")
+    if response == "n":
+        logger.info("  → 已中止。可修改后重新运行，或 rollback_to_snap() 回退。")
+    notes = input("备注（可选，直接回车跳过）→ ").strip() or ""
+    return approved, notes
+
+
+def _record_approval_decision(task_id: str, approved: bool, notes: str):
+    """将审批决策记录到项目状态中。"""
     from state_manager import update_project
     update_project({
         "decisions_log": [{
@@ -1042,13 +1139,15 @@ async def _request_human_approval(task_node: dict, results: dict) -> dict:
         }]
     }, dispatch_id=task_id)
 
-    status = "done" if approved else "blocked"
+
+def _build_approval_result(task_id: str, approved: bool, output: str, summary: str) -> dict:
+    """构建审批结果字典。"""
     return {
-        "id":      task_id,
-        "role":    "_approval",
-        "status":  status,
-        "output":  f"人工审批：{'批准' if approved else '中止'}。备注：{notes}",
-        "summary": f"{'批准' if approved else '中止'} — {notes or '无备注'}",
+        "id": task_id,
+        "role": "_approval",
+        "status": "done" if approved else "blocked",
+        "output": output,
+        "summary": summary,
     }
 
 # ── CLI ──────────────────────────────────────────────

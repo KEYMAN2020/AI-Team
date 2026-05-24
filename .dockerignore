@@ -1,0 +1,54 @@
+# =============================================================================
+# .dockerignore — 减少 Docker 构建上下文大小
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 运行时数据（不打包进镜像）
+state/
+outputs/
+logs/
+*.log
+
+# 环境配置（含密钥）
+.env
+.env.local
+.env.production
+
+# 文档
+*.md
+docs/
+changelog/
+
+# 部署相关（不打包进镜像）
+deploy/
+scripts/
+
+# CI
+.github/
+
+# 其他
+test_*.py
+test_*.txt
+test_*.log
+.DS_Store
+Thumbs.db

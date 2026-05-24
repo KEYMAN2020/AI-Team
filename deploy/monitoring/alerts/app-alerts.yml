@@ -1,0 +1,96 @@
+# =============================================================================
+# app-alerts.yml — AI-TeaM 应用告警规则
+# =============================================================================
+# 告警通知渠道：Grafana（Slack/Email）
+# =============================================================================
+
+groups:
+  - name: ai-team-app-alerts
+    interval: 30s
+    rules:
+      # ── 服务可用性告警 ──────────────────────────────
+      - alert: AppDown
+        expr: probe_success{job="ai-team-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AI-TeaM 应用服务不可用"
+          description: "应用服务 {{ $labels.instance }} 已宕机超过 1 分钟"
+          runbook_url: "https://wiki.ai-team.example.com/runbooks/app-down"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI-TeaM 错误率过高"
+          description: "过去 5 分钟错误率 {{ $value | humanizePercentage }}，超过 5% 阈值"
+
+      # ── 性能告警 ────────────────────────────────────
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API 响应时间过长"
+          description: "P95 响应时间 {{ $value }}s，超过 5s 阈值"
+
+      - alert: HighTaskQueueDepth
+        expr: ai_team_task_queue_depth > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "任务队列积压"
+          description: "任务队列深度 {{ $value }}，超过 50 阈值"
+
+      # ── 资源告警 ────────────────────────────────────
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{container="ai-team-app"} / container_spec_memory_limit_bytes{container="ai-team-app"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "应用内存使用率过高"
+          description: "内存使用率 {{ $value | humanizePercentage }}，超过 85% 阈值"
+
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{container="ai-team-app"}[5m]) / container_spec_cpu_quota{container="ai-team-app"} > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "应用 CPU 使用率过高"
+          description: "CPU 使用率 {{ $value | humanizePercentage }}，超过 80% 阈值"
+
+      - alert: DiskSpaceLow
+        expr: container_fs_usage_bytes{container="ai-team-app"} / container_fs_limit_bytes{container="ai-team-app"} > 0.90
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "磁盘空间不足"
+          description: "磁盘使用率 {{ $value | humanizePercentage }}，超过 90% 阈值"
+
+      # ── API Key 告警 ────────────────────────────────
+      - alert: APIKeyExpiring
+        expr: ai_team_api_key_expiry_days < 7
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "API Key 即将过期"
+          description: "{{ $labels.provider }} API Key 将在 {{ $value }} 天后过期"
+
+      # ── 日志告警 ────────────────────────────────────
+      - alert: RepeatedErrors
+        expr: rate({job="ai-team-app"} |= "ERROR" [5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "日志中错误频繁出现"
+          description: "过去 5 分钟出现 {{ $value }} 条 ERROR 日志"

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Team Live Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b1220; --panel: #121a2b; --panel-2: #18233a;
+      --text: #e8eefc; --muted: #94a3b8;
+      --primary: #60a5fa; --accent: #34d399; --warn: #f59e0b; --danger: #f87171;
+      --border: #24324d; --radius: 10px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; }
+    h1 small { font-size: 0.8rem; color: var(--muted); font-weight: normal; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+    /* Status Bar */
+    .status-bar {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 20px; min-width: 140px; flex: 1;
+    }
+    .stat-card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; }
+    .stat-card .value { font-size: 1.3rem; font-weight: 700; margin-top: 4px; }
+    .stat-card .value.idle { color: var(--muted); }
+    .stat-card .value.running { color: var(--primary); }
+    .stat-card .value.done { color: var(--accent); }
+    .stat-card .value.error { color: var(--danger); }
+
+    /* Progress Bar */
+    .progress-wrap {
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 20px; margin-bottom: 20px;
+    }
+    .progress-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.85rem; }
+    .progress-track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+    .progress-fill {
+      height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--accent));
+      border-radius: 4px; transition: width 0.5s ease;
+    }
+
+    /* Phase Info */
+    .phase-badge {
+      display: inline-block; background: var(--primary); color: #fff;
+      padding: 3px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;
+    }
+
+    /* Role Cards */
+    .role-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px; margin-bottom: 20px;
+    }
+    .role-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 12px 14px; border-left: 3px solid var(--muted);
+      transition: border-color 0.3s, background 0.3s;
+    }
+    .role-card.idle { border-left-color: var(--muted); }
+    .role-card.running { border-left-color: var(--primary); background: #1a2540; }
+    .role-card.done { border-left-color: var(--accent); }
+    .role-card.error { border-left-color: var(--danger); }
+    .role-card .role-name {
+      font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .role-card .role-status {
+      font-size: 0.6rem; padding: 2px 8px; border-radius: 8px;
+    }
+    .role-card .role-status.idle { background: var(--panel-2); color: var(--muted); }
+    .role-card .role-status.running { background: #1e3a5f; color: var(--primary); }
+    .role-card .role-status.done { background: #14532d; color: var(--accent); }
+    .role-card .role-status.error { background: #450a0a; color: var(--danger); }
+    .role-card .role-summary {
+      font-size: 0.75rem; color: var(--muted); margin-top: 6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* Event Log */
+    .event-log {
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 20px; max-height: 400px; overflow-y: auto;
+    }
+    .event-log h3 { font-size: 0.85rem; margin-bottom: 10px; color: var(--muted); }
+    .event-entry {
+      font-size: 0.75rem; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+      display: flex; gap: 8px;
+    }
+    .event-entry .time { color: var(--muted); white-space: nowrap; min-width: 55px; }
+    .event-entry .msg { color: var(--text); }
+    .event-entry .msg .highlight { color: var(--primary); font-weight: 600; }
+    .event-entry .msg .ok { color: var(--accent); }
+    .event-entry .msg .fail { color: var(--danger); }
+
+    .connection-badge {
+      display: inline-block; padding: 2px 10px; border-radius: 8px; font-size: 0.7rem;
+    }
+    .connection-badge.connected { background: #14532d; color: var(--accent); }
+    .connection-badge.disconnected { background: #450a0a; color: var(--danger); }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+      .role-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>
+    <span>AI Team — 实时看板</span>
+    <span id="connBadge" class="connection-badge disconnected">未连接</span>
+    <small id="projectName"></small>
+  </h1>
+
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <div class="stat-card">
+      <div class="label">项目状态</div>
+      <div class="value idle" id="statStatus">等待中</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">当前阶段</div>
+      <div class="value" id="statPhase"><span class="phase-badge" style="background:var(--muted)">—</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">已完成/总计</div>
+      <div class="value idle" id="statCount">0 / 0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">运行时间</div>
+      <div class="value idle" id="statElapsed">00:00</div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-wrap">
+    <div class="progress-header">
+      <span>进度</span>
+      <span id="progressText">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+  </div>
+
+  <!-- Role Cards -->
+  <h2 style="font-size:1rem;margin-bottom:10px;color:var(--muted)">11 个角色状态</h2>
+  <div class="role-grid" id="roleGrid"></div>
+
+  <!-- Event Log -->
+  <div class="event-log" id="eventLog">
+    <h3>实时事件流</h3>
+    <div id="logEntries">
+      <div class="event-entry"><span class="time">—</span><span class="msg">等待连接...</span></div>
+    </div>
+  </div>
+
+<script>
+// ── 角色定义 ──
+const ROLES = ['pm','product','architect','ux','dba','frontend','backend','reviewer','devops','debug','tester'];
+const ROLE_LABELS = {
+  pm:'PM', product:'Product', architect:'Architect', ux:'UX',
+  dba:'DBA', frontend:'Frontend', backend:'Backend',
+  reviewer:'Reviewer', devops:'DevOps', debug:'Debug', tester:'Tester'
+};
+
+// ── 状态 ──
+const state = { projectName: '', status: 'idle', phase: '', progress: 0, total: 0, done: 0 };
+ROLES.forEach(r => state[r] = { status: 'idle', summary: '' });
+let startTime = null;
+let logCount = 0;
+
+// ── 初始化 UI ──
+function initRoleGrid() {
+  const g = document.getElementById('roleGrid');
+  ROLES.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'role-card idle';
+    card.id = `card-${r}`;
+    card.innerHTML = `
+      <div class="role-name">
+        <span>${ROLE_LABELS[r]}</span>
+        <span class="role-status idle">等待</span>
+      </div>
+      <div class="role-summary"></div>
+    `;
+    g.appendChild(card);
+  });
+}
+initRoleGrid();
+
+// ── SSE ──
+function connectSSE() {
+  const badge = document.getElementById('connBadge');
+  badge.textContent = '连接中...';
+  badge.className = 'connection-badge disconnected';
+
+  const es = new EventSource('/events');
+
+  es.onopen = () => {
+    badge.textContent = '已连接';
+    badge.className = 'connection-badge connected';
+    addLog('系统', 'SSE 连接已建立', '');
+    // 拉一次全量状态补全
+    fetchState();
+  };
+
+  // 处理所有事件类型
+  const handlers = {
+    project_initialized: (d) => {
+      state.projectName = d.project_name || '';
+      document.getElementById('projectName').textContent = `「${state.projectName}」`;
+      state.status = 'running';
+      renderStatus();
+      startTime = Date.now();
+    },
+    phase_change: (d) => {
+      state.phase = d.phase || d.summary || '';
+      state.status = 'running';
+      renderStatus();
+    },
+    role_started: (d) => {
+      const role = d.role;
+      if (role && state[role] !== undefined) {
+        state[role].status = 'running';
+        state[role].summary = d.task || d.summary || '执行中...';
+        renderRole(role);
+        addLog(ROLE_LABELS[role] || role, `开始：${(d.task || d.summary || '').slice(0,60)}`, 'running');
+      }
+    },
+    role_completed: (d) => {
+      const role = d.role;
+      if (role && state[role] !== undefined) {
+        state[role].status = 'done';
+        state[role].summary = d.summary || '完成';
+        state.done++;
+        state.total = Math.max(state.total, state.done);
+        renderRole(role);
+        renderStatus();
+        addLog(ROLE_LABELS[role] || role, `完成 ✓ ${(d.summary || '').slice(0,80)}`, 'done');
+      }
+    },
+    role_error: (d) => {
+      const role = d.role;
+      if (role && state[role] !== undefined) {
+        state[role].status = 'error';
+        state[role].summary = d.error || '出错';
+        renderRole(role);
+        addLog(ROLE_LABELS[role] || role, `失败 ✗ ${(d.error || '').slice(0,80)}`, 'error');
+      }
+    },
+    role_skipped: (d) => {
+      const role = d.role;
+      if (role && state[role] !== undefined) {
+        state[role].status = 'done';
+        state[role].summary = '已跳过（断点恢复）';
+        state.done++;
+        renderRole(role);
+        renderStatus();
+        addLog(ROLE_LABELS[role] || role, '跳过 ↻ (断点恢复)', 'done');
+      }
+    },
+    approval_needed: (d) => {
+      addLog('审批', `等待人工审批：${(d.summary || '').slice(0,60)}`, '');
+    },
+    approval_passed: (d) => {
+      addLog('审批', `已批准`, 'done');
+    },
+    tier_complete: (d) => {
+      addLog('执行', `第 ${d.tier || '?'} 层完成`, 'done');
+    },
+    progress: (d) => {
+      if (d.progress !== undefined) {
+        state.progress = d.progress;
+        state.phase = d.phase || state.phase;
+        renderStatus();
+      }
+    },
+    project_completed: (d) => {
+      state.status = 'done';
+      state.progress = 100;
+      renderStatus();
+      addLog('系统', '项目完成！', 'done');
+    },
+    task_completed: (d) => {
+      state.status = 'done';
+      state.progress = 100;
+      renderStatus();
+      addLog('系统', '任务完成', 'done');
+    },
+    task_error: (d) => {
+      state.status = 'error';
+      renderStatus();
+      addLog('系统', `任务失败：${(d.error || '').slice(0,60)}`, 'error');
+    },
+    error: (d) => {
+      addLog('错误', d.error || d.summary || '未知错误', 'error');
+    },
+  };
+
+  es.addEventListener('message', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      // 检查是 {event, data} 格式还是直接数据
+      const evt = data.event || 'message';
+      const payload = data.data || data;
+      const h = handlers[evt];
+      if (h) h(payload);
+    } catch (err) {
+      // ignore parse errors
+    }
+  });
+
+  es.onerror = () => {
+    badge.textContent = '连接断开';
+    badge.className = 'connection-badge disconnected';
+    addLog('系统', 'SSE 连接断开，5 秒后重连...', 'error');
+    setTimeout(() => connectSSE(), 5000);
+  };
+}
+
+// ── 轮询兜底 ──
+function fetchState() {
+  fetch('/api/state')
+    .then(r => r.json())
+    .then(data => {
+      const proj = data.project || {};
+      state.projectName = proj.name || '';
+      document.getElementById('projectName').textContent = `「${state.projectName}」`;
+      state.status = proj.status || 'idle';
+      state.phase = proj.current_phase || '';
+      state.progress = proj.overall_progress || 0;
+      renderStatus();
+    })
+    .catch(() => {});
+}
+
+// ── UI 渲染 ──
+function renderStatus() {
+  const st = document.getElementById('statStatus');
+  st.textContent = { idle:'等待中', running:'运行中', done:'已完成', error:'出错' }[state.status] || state.status;
+  st.className = 'value ' + state.status;
+
+  document.getElementById('statPhase').innerHTML =
+    `<span class="phase-badge">${state.phase || '—'}</span>`;
+  document.getElementById('statCount').textContent = `${state.done} / ${state.total}`;
+  document.getElementById('statCount').className = 'value ' + state.status;
+  document.getElementById('progressText').textContent = `${state.progress}%`;
+  document.getElementById('progressFill').style.width = `${state.progress}%`;
+
+  // 运行时间
+  if (startTime && state.status === 'running') {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const m = String(Math.floor(elapsed / 60)).padStart(2,'0');
+    const s = String(elapsed % 60).padStart(2,'0');
+    document.getElementById('statElapsed').textContent = `${m}:${s}`;
+    document.getElementById('statElapsed').className = 'value running';
+    setTimeout(() => renderStatus(), 1000);
+  }
+}
+
+function renderRole(role) {
+  const card = document.getElementById(`card-${role}`);
+  if (!card) return;
+  const s = state[role];
+  card.className = `role-card ${s.status}`;
+  const statusEl = card.querySelector('.role-status');
+  statusEl.textContent = { idle:'等待', running:'执行中', done:'完成', error:'出错' }[s.status] || s.status;
+  statusEl.className = `role-status ${s.status}`;
+  const summaryEl = card.querySelector('.role-summary');
+  summaryEl.textContent = s.summary || '';
+}
+
+function addLog(source, message, type) {
+  const container = document.getElementById('logEntries');
+  const entry = document.createElement('div');
+  entry.className = 'event-entry';
+  const now = new Date();
+  const ts = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+  const cls = type === 'done' ? 'ok' : type === 'error' ? 'fail' : 'highlight';
+  entry.innerHTML = `<span class="time">${ts}</span><span class="msg"><span class="${cls}">${source}</span> ${message}</span>`;
+  container.appendChild(entry);
+  logCount++;
+  // 保留最多 100 条
+  if (logCount > 100) {
+    container.removeChild(container.firstChild);
+    logCount--;
+  }
+  // 自动滚动到底部
+  document.getElementById('eventLog').scrollTop = document.getElementById('eventLog').scrollHeight;
+}
+
+// ── 启动 ──
+connectSSE();
+
+// 每 10 秒轮询兜底（即使 SSE 断了也能恢复）
+setInterval(fetchState, 10000);
+</script>
+</body>
+</html>

@@ -141,7 +141,72 @@ TOOL_DEFS = {
             "required": ["content_a", "content_b"]
         }
     },
+
+    "ui_ux_search": {
+        "name": "ui_ux_search",
+        "description": "查询 UI/UX Pro Max 设计知识库。提供专业 UI 风格、配色方案、字体搭配、UX 准则、图表类型和产品类型推荐。适合 UX/设计角色在做设计决策时参考最佳实践。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索关键词，如 'dark mode dashboard'、'SaaS landing page'、'glassmorphism'"},
+                "domain": {"type": "string", "enum": ["style", "prompt", "color", "chart", "landing", "product", "ux", "typography", "google-fonts"],
+                           "description": "搜索领域：style=UI风格, color=配色方案, chart=图表推荐, landing=落地页结构, product=产品类型, ux=UX准则及设计模式, typography=字体搭配"},
+                "stack": {"type": "string", "enum": ["react", "nextjs", "vue", "svelte", "astro", "swiftui", "react-native", "flutter", "nuxtjs", "nuxt-ui", "html-tailwind", "shadcn", "jetpack-compose", "angular", "laravel", "threejs"],
+                          "description": "技术栈搜索（可选，填此参数后忽略 domain）"},
+                "max_results": {"type": "integer", "description": "最大返回条数，默认 3", "default": 3}
+            },
+            "required": ["query"]
+        }
+    },
 }
+
+
+# ════════════════════════════════════════════════════
+# Tool Categories — 用于 Tool Loadout 动态筛选
+# 每个工具标记所属类别和触发关键词
+# ════════════════════════════════════════════════════
+
+TOOL_CATEGORIES = {
+    "web_search":      {"cats": ["research", "reference"],      "trigger": ["查", "搜", "搜索", "find", "lookup", "查阅", "文档", "规范", "最佳实践", "example"]},
+    "code_run":        {"cats": ["dev", "verification"],         "trigger": ["运行", "执行", "测试", "跑", "run", "test", "verify", "验证", "调试", "debug"]},
+    "file_read":       {"cats": ["io", "reference"],             "trigger": ["读", "看", "查看", "检查", "read", "check", "open", "查看代码", "查看文件"]},
+    "file_write":      {"cats": ["io", "output"],                "trigger": ["写", "创建", "保存", "生成", "write", "create", "save", "generate", "输出"]},
+    "bash":            {"cats": ["dev", "ops", "deploy"],        "trigger": ["部署", "启动", "运行", "deploy", "restart", "install", "docker", "容器", "服务", "日志"]},
+    "resource_search": {"cats": ["research", "best_practice"],   "trigger": ["知识库", "最佳实践", "设计模式", "规范", "pattern", "best practice", "security"]},
+    "api_doc_update":  {"cats": ["documentation", "arch"],       "trigger": ["API", "接口", "endpoint", "OpenAPI", "swagger", "文档化"]},
+    "diff_view":       {"cats": ["verification", "debug"],       "trigger": ["对比", "差异", "diff", "区别", "changed", "修改了"]},
+    "ui_ux_search":    {"cats": ["design", "research"],          "trigger": ["设计", "风格", "配色", "字体", "UX", "UI", "布局", "landing", "chart", "调色板", "推荐", "美观", "样式"]},
+}
+
+def filter_tools_for_task(tools: list[str], task_description: str) -> list[str]:
+    """
+    根据任务描述关键词动态筛选相关工具（Tool Loadout Management）。
+    如果 task_description 为空或没有匹配，返回全部工具。
+    过滤逻辑简单高效：检测任务文本中是否包含工具分类的 trigger 关键词。
+    """
+    if not task_description:
+        return tools
+    desc_lower = task_description.lower()
+    scored = {}
+    for t in tools:
+        cats = TOOL_CATEGORIES.get(t, {})
+        triggers = cats.get("trigger", [])
+        # 计算匹配分数：每个匹配关键词 +1
+        score = sum(2 for kw in triggers if kw.lower() in desc_lower)
+        scored[t] = score
+    # 按分数降序排列
+    sorted_tools = sorted(tools, key=lambda t: scored.get(t, 0), reverse=True)
+    max_score = max(scored.values()) if scored else 0
+    if max_score == 0:
+        return tools  # 无匹配则返回全部
+    threshold = max(1, max_score * 0.3)  # 保留分数 >= 最高分30% 的工具
+    filtered = [t for t in sorted_tools if scored.get(t, 0) >= threshold]
+    # 无论如何保留 io 类工具（读/写文件是基本操作）
+    for t in tools:
+        cats = TOOL_CATEGORIES.get(t, {}).get("cats", [])
+        if "io" in cats and t not in filtered:
+            filtered.append(t)
+    return filtered
 
 
 # ════════════════════════════════════════════════════
@@ -180,24 +245,31 @@ except ImportError:
 # 获取角色工具列表（供 model_adapter 使用）
 # ════════════════════════════════════════════════════
 
-def get_tools_for_role(role: str) -> list[dict]:
-    """返回该角色的工具定义列表（OpenAI/Anthropic 格式）。自动解析别名。"""
+def get_tools_for_role(role: str, task_context: str = "") -> list[dict]:
+    """返回该角色的工具定义列表（OpenAI/Anthropic 格式）。自动解析别名。
+    如果提供了 task_context，会做 Tool Loadout 动态筛选。"""
     try:
         from role_registry import resolve_role as _resolve
         role = _resolve(role) or role
     except ImportError:
         pass
     tool_names = ROLE_TOOLS.get(role, [])
+    if task_context:
+        tool_names = filter_tools_for_task(tool_names, task_context)
     return [TOOL_DEFS[name] for name in tool_names if name in TOOL_DEFS]
 
-def get_tool_names_for_role(role: str) -> list[str]:
-    """返回该角色的工具名称列表。自动解析别名。"""
+def get_tool_names_for_role(role: str, task_context: str = "") -> list[str]:
+    """返回该角色的工具名称列表。自动解析别名。
+    如果提供了 task_context，会做 Tool Loadout 动态筛选。"""
     try:
         from role_registry import resolve_role as _resolve
         role = _resolve(role) or role
     except ImportError:
         pass
-    return ROLE_TOOLS.get(role, [])
+    tool_names = ROLE_TOOLS.get(role, [])
+    if task_context:
+        tool_names = filter_tools_for_task(tool_names, task_context)
+    return tool_names
 
 
 # ════════════════════════════════════════════════════
@@ -218,6 +290,7 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
         "diff_view":       _exec_diff_view,
         "resource_search": _exec_resource_search,
         "api_doc_update":  _exec_api_doc_update,
+        "ui_ux_search":    _exec_ui_ux_search,
     }
     handler = handlers.get(tool_name)
     if not handler:
@@ -503,6 +576,39 @@ def _exec_api_doc_update(method: str, path: str, summary: str, tag: str,
 
 
 
+def _exec_ui_ux_search(query: str, domain: str = None, stack: str = None,
+                        max_results: int = 3) -> str:
+    """执行 UI/UX Pro Max 设计知识库搜索。"""
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).resolve().parent / "ui_ux_pro_max" / "src" / "ui-ux-pro-max" / "scripts"
+    search_py = scripts_dir / "search.py"
+    if not search_py.exists():
+        return "[错误] UI/UX Pro Max 知识库未安装：" + str(search_py)
+
+    cmd = [sys.executable, str(search_py), query, "--json", "--max-results", str(max_results)]
+    if stack:
+        cmd += ["--stack", stack]
+    elif domain:
+        cmd += ["--domain", domain]
+
+    try:
+        # 注意：Windows 上 text=True 默认用 cp1252 解码，会破坏 UTF-8 输出（含 emoji）
+        # 因此手动用 UTF-8 解码 bytes
+        result = subprocess.run(cmd, capture_output=True, timeout=30,
+                                cwd=str(scripts_dir))
+        stdout = result.stdout.decode("utf-8", errors="replace").strip() if result.stdout else ""
+        stderr = result.stderr.decode("utf-8", errors="replace").strip() if result.stderr else ""
+        if result.returncode != 0:
+            return "[UI/UX 搜索失败] " + (stderr[:500] or stdout[:500] or f"退出码 {result.returncode}")
+        return stdout or "未找到匹配结果"
+    except subprocess.TimeoutExpired:
+        return "[超时] UI/UX 知识库搜索超时（30s）"
+    except Exception as e:
+        return "[UI/UX 搜索异常] " + str(e)
+
+
+
 # ════════════════════════════════════════════════════
 # 系统提示词工具说明生成器
 # 自动为每个角色的系统提示词注入工具使用说明
@@ -517,16 +623,59 @@ TOOL_USAGE_HINTS = {
     "diff_view":       "对比代码修改前后差异、验证修复效果",
     "resource_search": "搜索项目知识库获取最佳实践、设计模式和安全规范",
     "api_doc_update":  "将接口定义写入 OpenAPI 规范（用于记录 API 设计）",
+    "ui_ux_search":    "查询 UI/UX 设计知识库获取风格、配色、字体、UX 准则、图表和模板推荐",
 }
 
-def build_tools_prompt(role: str) -> str:
-    """生成注入到系统提示词末尾的工具使用说明。"""
-    tools = get_tool_names_for_role(role)
+def build_tools_prompt(role: str, use_native_format: bool = False,
+                       task_context: str = "") -> str:
+    """生成注入到系统提示词末尾的工具使用说明。
+
+    参数：
+        role: 角色名
+        use_native_format: True=原生 function calling 提示（GPT-4o/Codex），
+                           False=XML 格式提示（DeepSeek 等 tool calling 弱的模型）
+        task_context: 任务描述文本，用于 Tool Loadout 动态筛选
+    """
+    all_tools = get_tool_names_for_role(role)
+    tools = get_tool_names_for_role(role, task_context)
     if not tools:
         return ""
+
+    # 如果有工具被筛掉了，备注一下
+    filtered_out = [t for t in all_tools if t not in tools]
     lines = ["\n## 可用工具\n你可以根据任务需要自主调用以下工具，不需要请示就直接用：\n"]
     for t in tools:
         hint = TOOL_USAGE_HINTS.get(t, "")
         lines.append(f"- **{t}**：{hint}")
+    if filtered_out:
+        lines.append(f"\n（根据当前任务上下文，{', '.join(filtered_out)} 暂不展示，如需使用直接调用即可。这些工具仍可正常执行。）")
+
+    if use_native_format:
+        lines.append("")
+        lines.append("### 工具调用方式")
+        lines.append("你可以使用 API 的原生 function calling 机制调用以下工具。")
+        lines.append("系统会自动执行你的工具调用并将结果回传给你。")
+        lines.append("当你需要调用工具时，直接使用 function calling 接口即可，不要输出 XML 格式。")
+        lines.append("")
+        lines.append("重要规则：")
+        lines.append("- **file_write**：创建实际代码文件，不要只描述代码结构或输出文本总结")
+        lines.append("- **code_run**：代码写完后运行验证，确保能跑通")
+        lines.append("- **web_search / resource_search**：不确定的技术细节先搜索")
+        lines.append("- **file_read**：查看已有代码和上游输出，避免重复造轮子")
+    else:
+        lines.append("")
+        lines.append("### 工具调用格式（重要）")
+        lines.append("当需要使用工具时，请使用以下XML格式（不要输出空`<tool_calls>`标签）：")
+        lines.append("")
+        lines.append('```')
+        lines.append('<invoke name="file_write">')
+        lines.append('  <parameter name="path">outputs/silver_demo/app.py</parameter>')
+        lines.append('  <parameter name="content">print("hello")</parameter>')
+        lines.append('</invoke>')
+        lines.append('```')
+        lines.append("")
+        lines.append("也可以直接使用函数调用的方式输出多个工具：")
+        lines.append("每个工具写一个 `<invoke name=\"工具名\">...<parameter name=\"参数名\">参数值</parameter>...</invoke>` 块。")
+        lines.append("代码生成任务中，必须使用 file_write 创建实际的源代码文件，不要只描述代码。")
     lines.append("\n工具调用原则：遇到不确定的技术细节先搜索再动手；代码写完先运行验证再输出。")
     return "\n".join(lines)

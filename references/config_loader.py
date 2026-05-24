@@ -35,7 +35,7 @@ def _expand_env(value):
     if isinstance(value, str):
         def _replacer(m):
             var_name = m.group(1)
-            default = m.group(2) or ""
+            default = (m.group(2) or "").lstrip("-")  # ${VAR:-default} → "default"
             return os.environ.get(var_name, default)
         return _ENV_PATTERN.sub(_replacer, value)
     if isinstance(value, dict):

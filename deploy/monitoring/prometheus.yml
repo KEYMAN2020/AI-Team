@@ -1,0 +1,51 @@
+# =============================================================================
+# prometheus.yml — AI-TeaM Prometheus 配置
+# =============================================================================
+# 采集指标并存储，供 Grafana 可视化
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# 告警规则
+rule_files:
+  - "alerts/*.yml"
+
+# 采集目标
+scrape_configs:
+  # ── Prometheus 自身指标 ──────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── AI-TeaM 应用指标 ─────────────────────────────
+  - job_name: "ai-team-app"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8123"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "ai-team-app"
+    # 健康检查
+    health_check:
+      - source_labels: [__address__]
+        regex: ".*"
+        replacement: "http://app:8123/health"
+
+  # ── Docker 容器指标（通过 cAdvisor）──────────────
+  - job_name: "docker-containers"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        replacement: "$1"
+        target_label: container_name
+
+  # ── Node 系统指标（通过 node_exporter）───────────
+  - job_name: "node"
+    static_configs:
+      - targets: ["node-exporter:9100"]

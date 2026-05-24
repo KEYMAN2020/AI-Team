@@ -1,0 +1,50 @@
+# =============================================================================
+# promtail.yml — AI-TeaM Promtail 日志采集配置
+# =============================================================================
+# 采集 Docker 容器日志和应用日志文件，发送到 Loki
+# =============================================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # ── Docker 容器日志 ──────────────────────────────
+  - job_name: "docker-containers"
+    docker_sd_configs:
+      - host: "unix:///var/run/docker.sock"
+        refresh_interval: 15s
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        replacement: "$1"
+        target_label: "container"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "service"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "project"
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: "log_stream"
+
+  # ── 应用日志文件 ─────────────────────────────────
+  - job_name: "ai-team-app-logs"
+    static_configs:
+      - targets: ["localhost"]
+        labels:
+          job: "ai-team-app"
+          service: "app"
+          __path__: "/var/log/ai-team/*.log"
+    pipeline_stages:
+      - regex:
+          expression: "^(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>\\w+) (?P<message>.*)$"
+      - labels:
+          level:
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02 15:04:05,000"

@@ -3,7 +3,7 @@
 # 切换模型：修改 active_provider 即可，不需要改代码。
 # 支持：deepseek | claude | openai | gemini | any
 
-active_provider: deepseek
+active_provider: any
 
 default_timeout: 180
 

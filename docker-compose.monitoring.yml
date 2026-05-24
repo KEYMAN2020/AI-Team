@@ -1,0 +1,121 @@
+# =============================================================================
+# docker-compose.monitoring.yml — AI-TeaM 监控栈
+# =============================================================================
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+# =============================================================================
+# 组件：
+#   - Prometheus：指标采集
+#   - Grafana：可视化仪表盘
+#   - Loki：日志聚合
+#   - Promtail：日志采集器
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ── Prometheus（指标采集）─────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: ai-team-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ai-team-prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    networks:
+      - ai-team-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Grafana（可视化仪表盘）────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: ai-team-grafana
+    restart: unless-stopped
+    volumes:
+      - ./deploy/monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./deploy/monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ai-team-grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_SERVER_ROOT_URL=https://monitor.ai-team.example.com
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - ai-team-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Loki（日志聚合）────────────────────────────────
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: ai-team-loki
+    restart: unless-stopped
+    volumes:
+      - ./deploy/monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - ai-team-loki-data:/loki
+    command:
+      - "-config.file=/etc/loki/loki.yml"
+    ports:
+      - "3100:3100"
+    networks:
+      - ai-team-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Promtail（日志采集器）─────────────────────────
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: ai-team-promtail
+    restart: unless-stopped
+    volumes:
+      - ./deploy/monitoring/promtail.yml:/etc/promtail/promtail.yml:ro
+      - ai-team-logs-data:/var/log/ai-team:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - "-config.file=/etc/promtail/promtail.yml"
+    depends_on:
+      - loki
+    networks:
+      - ai-team-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ── 数据卷 ────────────────────────────────────────────
+volumes:
+  ai-team-prometheus-data:
+    name: ai-team-prometheus-data
+  ai-team-grafana-data:
+    name: ai-team-grafana-data
+  ai-team-loki-data:
+    name: ai-team-loki-data
+
+# ── 网络（复用主 docker-compose 的网络）─────────────
+networks:
+  ai-team-net:
+    external: true
+    name: ai-team-network

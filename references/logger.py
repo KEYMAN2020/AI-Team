@@ -34,11 +34,18 @@ from typing import Optional
 
 # ── 标准 logging（兼容已有代码） ──────────────────────
 
+class _SafeStderrHandler(logging.StreamHandler):
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except (ValueError, OSError):
+            pass  # stderr closed, silently ignore
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stderr)],
+    handlers=[_SafeStderrHandler(sys.stderr)],
 )
 
 # ── JSONL 结构化日志 ─────────────────────────────────

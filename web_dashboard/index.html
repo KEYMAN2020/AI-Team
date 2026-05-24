@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Team Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121a2b;
+      --panel-2: #18233a;
+      --text: #e8eefc;
+      --muted: #94a3b8;
+      --primary: #60a5fa;
+      --accent: #34d399;
+      --warn: #f59e0b;
+      --danger: #f87171;
+      --border: #24324d;
+      --shadow: 0 10px 30px rgba(0,0,0,.25);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: .3px;
+    }
+
+    .brand p {
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      border: none;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(24,35,58,.95), rgba(18,26,43,.95));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .metric h3, .section-title {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .metric .value {
+      font-size: 34px;
+      font-weight: 800;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .pill.success { background: rgba(52,211,153,.15); color: #86efac; }
+    .pill.warn { background: rgba(245,158,11,.15); color: #fcd34d; }
+    .pill.info { background: rgba(96,165,250,.15); color: #93c5fd; }
+    .pill.danger { background: rgba(248,113,113,.15); color: #fca5a5; }
+
+    .subtext {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .team-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .member {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      background: rgba(255,255,255,.02);
+      border: 1px solid rgba(255,255,255,.05);
+      border-radius: 14px;
+    }
+
+    .member-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      color: white;
+      background: linear-gradient(135deg, #3b82f6, #22c55e);
+    }
+
+    .name {
+      font-weight: 700;
+    }
+
+    .role {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 3px;
+    }
+
+    .progress {
+      width: 100%;
+      height: 10px;
+      background: #0f172a;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 10px;
+      border: 1px solid rgba(255,255,255,.06);
+    }
+
+    .progress > span {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #3b82f6, #34d399);
+    }
+
+    .chart-bars {
+      display: flex;
+      align-items: end;
+      gap: 12px;
+      height: 210px;
+      margin-top: 18px;
+    }
+
+    .bar-wrap {
+      flex: 1;
+      text-align: center;
+    }
+
+    .bar {
+      width: 100%;
+      border-radius: 14px 14px 6px 6px;
+      background: linear-gradient(180deg, #60a5fa, #2563eb);
+      border: 1px solid rgba(255,255,255,.08);
+      min-height: 24px;
+    }
+
+    .bar-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 10px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+      font-size: 14px;
+    }
+
+    th { color: var(--muted); font-weight: 600; }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-top: 4px;
+      background: var(--primary);
+      box-shadow: 0 0 0 5px rgba(96,165,250,.12);
+    }
+
+    .event p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .footer-note {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 24px 0 8px;
+    }
+
+    @media (max-width: 960px) {
+      .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <h1>AI Team Dashboard</h1>
+        <p>Monitor project health, team activity, delivery pace, and operational insights.</p>
+      </div>
+      <div class="actions">
+        <button class="btn">Export Report</button>
+        <button class="btn">Filter Team</button>
+        <button class="btn primary">Create Task</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card span-3">
+        <div class="metric">
+          <div>
+            <h3>Active Projects</h3>
+            <div class="value">12</div>
+            <div class="subtext">3 launched this week</div>
+          </div>
+          <span class="pill success">+18%</span>
+        </div>
+      </div>
+
+      <div class="card span-3">
+        <div class="metric">
+          <div>
+            <h3>Tasks Completed</h3>
+            <div class="value">284</div>
+            <div class="subtext">Across product, design, and engineering</div>
+          </div>
+          <span class="pill info">This sprint</span>
+        </div>
+      </div>
+
+      <div class="card span-3">
+        <div class="metric">
+          <div>
+            <h3>Team Utilization</h3>
+            <div class="value">76%</div>
+            <div class="subtext">Balanced allocation across agents</div>
+          </div>
+          <span class="pill warn">Watch load</span>
+        </div>
+      </div>
+
+      <div class="card span-3">
+        <div class="metric">
+          <div>
+            <h3>Risk Alerts</h3>
+            <div class="value">4</div>
+            <div class="subtext">2 require escalation today</div>
+          </div>
+          <span class="pill danger">Urgent</span>
+        </div>
+      </div>
+
+      <div class="card span-7">
+        <div class="section-title">Delivery Velocity</div>
+        <div class="subtext">Weekly output by AI team function</div>
+        <div class="chart-bars">
+          <div class="bar-wrap">
+            <div class="bar" style="height: 72%;"></div>
+            <div class="bar-label">PM</div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="height: 88%;"></div>
+            <div class="bar-label">Product</div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="height: 64%;"></div>
+            <div class="bar-label">UX</div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="height: 94%;"></div>
+            <div class="bar-label">Frontend</div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="height: 81%;"></div>
+            <div class="bar-label">Backend</div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="height: 58%;"></div>
+            <div class="bar-label">QA</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card span-5">
+        <div class="section-title">Team Status</div>
+        <div class="team-list">
+          <div class="member">
+            <div class="member-info">
+              <div class="avatar">PM</div>
+              <div>
+                <div class="name">Project Manager</div>
+                <div class="role">Planning and coordination</div>
+              </div>
+            </div>
+            <span class="pill success">Online</span>
+          </div>
+          <div class="member">
+            <div class="member-info">
+              <div class="avatar">FE</div>
+              <div>
+                <div class="name">Frontend Agent</div>
+                <div class="role">UI build and dashboard integration</div>
+              </div>
+            </div>
+            <span class="pill success">Focused</span>
+          </div>
+          <div class="member">
+            <div class="member-info">
+              <div class="avatar">BE</div>
+              <div>
+                <div class="name">Backend Agent</div>
+                <div class="role">API and service orchestration</div>
+              </div>
+            </div>
+            <span class="pill warn">Busy</span>
+          </div>
+          <div class="member">
+            <div class="member-info">
+              <div class="avatar">QA</div>
+              <div>
+                <div class="name">Tester Agent</div>
+                <div class="role">Regression and release validation</div>
+              </div>
+            </div>
+            <span class="pill info">Queued</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card span-8">
+        <div class="section-title">Current Projects</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>ETA</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Customer Support Copilot</td>
+              <td>Backend + UX</td>
+              <td><span class="pill success">On Track</span></td>
+              <td>
+                <div class="progress"><span style="width: 78%"></span></div>
+              </td>
+              <td>May 30</td>
+            </tr>
+            <tr>
+              <td>Executive Insights Portal</td>
+              <td>Frontend</td>
+              <td><span class="pill warn">Review</span></td>
+              <td>
+                <div class="progress"><span style="width: 61%"></span></div>
+              </td>
+              <td>Jun 02</td>
+            </tr>
+            <tr>
+              <td>AI Workflow Automation</td>
+              <td>PM + Product</td>
+              <td><span class="pill danger">Blocked</span></td>
+              <td>
+                <div class="progress"><span style="width: 42%"></span></div>
+              </td>
+              <td>Jun 05</td>
+            </tr>
+            <tr>
+              <td>Testing Intelligence Hub</td>
+              <td>QA</td>
+              <td><span class="pill success">Stable</span></td>
+              <td>
+                <div class="progress"><span style="width: 86%"></span></div>
+              </td>
+              <td>May 28</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card span-4">
+        <div class="section-title">Operational Timeline</div>
+        <div class="timeline">
+          <div class="event">
+            <div class="dot"></div>
+            <div>
+              <strong>09:20 — Sprint sync generated</strong>
+              <p>PM agent aligned team priorities and updated dependencies.</p>
+            </div>
+          </div>
+          <div class="event">
+            <div class="dot" style="background:#34d399; box-shadow: 0 0 0 5px rgba(52,211,153,.12);"></div>
+            <div>
+              <strong>11:10 — UI prototype approved</strong>
+              <p>Frontend and UX agents finalized dashboard layout.</p>
+            </div>
+          </div>
+          <div class="event">
+            <div class="dot" style="background:#f59e0b; box-shadow: 0 0 0 5px rgba(245,158,11,.12);"></div>
+            <div>
+              <strong>13:45 — API risk detected</strong>
+              <p>Backend latency spike triggered a watch alert for one service.</p>
+            </div>
+          </div>
+          <div class="event">
+            <div class="dot" style="background:#f87171; box-shadow: 0 0 0 5px rgba(248,113,113,.12);"></div>
+            <div>
+              <strong>15:30 — Test suite waiting</strong>
+              <p>QA agent is queued for the next build artifact.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card span-12">
+        <div class="section-title">Summary</div>
+        <div class="subtext">
+          This HTML dashboard provides a clean executive overview for an AI team, including metrics, member status,
+          project progress, and a lightweight activity timeline. It is built with plain HTML and CSS, making it easy to
+          open directly in a browser or integrate into a larger web application.
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">AI Team Dashboard • Static HTML Demo</div>
+  </div>
+</body>
+</html>

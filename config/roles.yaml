@@ -6,60 +6,63 @@
 # 角色缩写：
 #   pm, product, architect, ux, dba,
 #   frontend, backend, reviewer, devops, debug, tester
+#
+# text_tool_compat: true  → 当 tool_calls 为空时，从文本中解析工具调用
+#                           用于兼容 tool calling 能力弱的模型（如 DeepSeek）
 
 deepseek:
   pm:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.3
-    thinking: true
-    timeout: 120
+    thinking: false
+    timeout: 300
   product:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.5
     thinking: false
     timeout: 300
   architect:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.3
-    thinking: true
-    timeout: 120
+    thinking: false
+    timeout: 300
   ux:
-    model: deepseek-v4-flash
+    model: deepseek-chat
     temperature: 0.7
     thinking: false
     timeout: 300
   dba:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.1
-    thinking: true
+    thinking: false
     timeout: 300
   frontend:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.0
     thinking: false
     timeout: 300
   backend:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.0
     thinking: false
     timeout: 300
   reviewer:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.0
-    thinking: true
-    timeout: 120
+    thinking: false
+    timeout: 300
   devops:
-    model: deepseek-v4-flash
+    model: deepseek-chat
     temperature: 0.0
     thinking: false
     timeout: 300
   debug:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.0
-    thinking: true
+    thinking: false
     timeout: 300
   tester:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.0
     thinking: false
     timeout: 300
@@ -220,46 +223,47 @@ gemini:
 
 any:
   pm:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.3
     timeout: 120
   product:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.5
     timeout: 300
   architect:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.3
     timeout: 120
   ux:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.7
     timeout: 300
   dba:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.1
     timeout: 300
   frontend:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.2
     timeout: 300
   backend:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.2
     timeout: 300
+    _max_iter: 10
   reviewer:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.0
     timeout: 120
   devops:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.2
     timeout: 300
   debug:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.0
     timeout: 300
   tester:
-    model: "${AI_TEAM_MODEL:-gpt-4o}"
+    model: "gpt-5.4"
     temperature: 0.2
     timeout: 300

@@ -4,10 +4,11 @@ description: 项目经理 — 需求分析、任务拆分、DAG规划
 aliases: []
 model_config:
   deepseek:
-    model: deepseek-v4-pro
+    model: deepseek-chat
     temperature: 0.3
-    thinking: true
+    thinking: false
     timeout: 300
+    text_tool_compat: true
   claude:
     model: claude-opus-4-20250514
     temperature: 0.3
@@ -23,7 +24,7 @@ model_config:
     temperature: 0.3
     timeout: 300
   any:
-    model: gpt-4o
+    model: gpt-5.5
     temperature: 0.3
     timeout: 300
 tools:
