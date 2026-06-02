@@ -1,15 +1,10 @@
-# roles.yaml — 角色配置覆盖层（优先于 role_registry）
-# ======================================================
-# 此文件可覆盖 roles/*/config.yaml 中的模型/温度/超时配置。
-# 基础配置来自 role_registry（角色目录下的 config.yaml），
-# 这里的设置会覆盖同名角色+provider 的配置。
-# 角色缩写：
-#   pm, product, architect, ux, dba,
+﻿# roles.yaml 鈥?瑙掕壊閰嶇疆瑕嗙洊灞傦紙浼樺厛浜?role_registry锛?# ======================================================
+# 姝ゆ枃浠跺彲瑕嗙洊 roles/*/config.yaml 涓殑妯″瀷/娓╁害/瓒呮椂閰嶇疆銆?# 鍩虹閰嶇疆鏉ヨ嚜 role_registry锛堣鑹茬洰褰曚笅鐨?config.yaml锛夛紝
+# 杩欓噷鐨勮缃細瑕嗙洊鍚屽悕瑙掕壊+provider 鐨勯厤缃€?# 瑙掕壊缂╁啓锛?#   pm, product, architect, ux, dba,
 #   frontend, backend, reviewer, devops, debug, tester
 #
-# text_tool_compat: true  → 当 tool_calls 为空时，从文本中解析工具调用
-#                           用于兼容 tool calling 能力弱的模型（如 DeepSeek）
-
+# text_tool_compat: true  鈫?褰?tool_calls 涓虹┖鏃讹紝浠庢枃鏈腑瑙ｆ瀽宸ュ叿璋冪敤
+#                           鐢ㄤ簬鍏煎 tool calling 鑳藉姏寮辩殑妯″瀷锛堝 DeepSeek锛?
 deepseek:
   pm:
     model: deepseek-chat
@@ -222,48 +217,53 @@ gemini:
     timeout: 300
 
 any:
+  text_tool_compat: true
+  # 蹇ā鍨嬶紙gpt-5.5锛夛細瑙勫垝銆佽璁°€佺紪鐮併€佹祴璇?鈥?闇€瑕佸揩閫熷搷搴旂殑瑙掕壊
   pm:
-    model: "gpt-5.4"
+    model: "gpt-5.5"
     temperature: 0.3
-    timeout: 120
-  product:
-    model: "gpt-5.4"
-    temperature: 0.5
-    timeout: 300
-  architect:
-    model: "gpt-5.4"
-    temperature: 0.3
-    timeout: 120
-  ux:
-    model: "gpt-5.4"
-    temperature: 0.7
-    timeout: 300
-  dba:
-    model: "gpt-5.4"
-    temperature: 0.1
-    timeout: 300
-  frontend:
-    model: "gpt-5.4"
-    temperature: 0.2
-    timeout: 300
-  backend:
-    model: "gpt-5.4"
-    temperature: 0.2
-    timeout: 300
+    timeout: 200
     _max_iter: 10
-  reviewer:
-    model: "gpt-5.4"
-    temperature: 0.0
-    timeout: 120
+  product:
+    model: "gpt-5.5"
+    temperature: 0.5
+    timeout: 200
+  ux:
+    model: "gpt-5.5"
+    temperature: 0.7
+    timeout: 200
+  dba:
+    model: "gpt-5.5"
+    temperature: 0.1
+    timeout: 200
+  frontend:
+    model: "gpt-5.5"
+    temperature: 0.2
+    timeout: 200
+  backend:
+    model: "gpt-5.5"
+    temperature: 0.2
+    timeout: 200
+    _max_iter: 10
   devops:
-    model: "gpt-5.4"
+    model: "gpt-5.5"
     temperature: 0.2
-    timeout: 300
+    timeout: 200
   debug:
-    model: "gpt-5.4"
+    model: "gpt-5.5"
     temperature: 0.0
-    timeout: 300
+    timeout: 200
   tester:
-    model: "gpt-5.4"
+    model: "gpt-5.5"
     temperature: 0.2
-    timeout: 300
+    timeout: 200
+
+  # 娣辨ā鍨嬶紙gpt-5.5锛夛細鏋舵瀯璁捐銆佷唬鐮佸鏌?鈥?闇€瑕佹繁搴︽帹鐞嗙殑瑙掕壊
+  architect:
+    model: "gpt-5.5"
+    temperature: 0.3
+    timeout: 200
+  reviewer:
+    model: "gpt-5.5"
+    temperature: 0.0
+    timeout: 200

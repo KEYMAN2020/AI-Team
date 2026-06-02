@@ -1,9 +1,6 @@
-"""
-event_bus.py — 轻量级事件总线（SSE 实时推送用）
-=================================================
-server.py 和 runner.py 共同导入。
-runner 在执行各阶段 emit() 事件，server 的 SSE 端点订阅并推给浏览器。
-"""
+﻿"""
+event_bus.py 鈥?杞婚噺绾т簨浠舵€荤嚎锛圫SE 瀹炴椂鎺ㄩ€佺敤锛?=================================================
+server.py 鍜?runner.py 鍏卞悓瀵煎叆銆?runner 鍦ㄦ墽琛屽悇闃舵 emit() 浜嬩欢锛宻erver 鐨?SSE 绔偣璁㈤槄骞舵帹缁欐祻瑙堝櫒銆?"""
 
 import json
 import threading
@@ -12,43 +9,39 @@ from queue import Queue, Empty
 
 _clients: list[Queue] = []
 _lock = threading.Lock()
-_log: list[str] = []          # 最近事件日志（最多 200 条），新客户端重放用
+_log: list[str] = []          # 鏈€杩戜簨浠舵棩蹇楋紙鏈€澶?200 鏉★級锛屾柊瀹㈡埛绔噸鏀剧敤
 _log_lock = threading.Lock()
 _MAX_LOG = 200
 
 
 def subscribe() -> tuple[Queue, list[str]]:
     """
-    新 SSE 客户端订阅事件流。
-    返回 (queue, recent_events) — recent_events 用于重放历史。
-    """
+    鏂?SSE 瀹㈡埛绔闃呬簨浠舵祦銆?    杩斿洖 (queue, recent_events) 鈥?recent_events 鐢ㄤ簬閲嶆斁鍘嗗彶銆?    """
     q = Queue()
     with _lock:
         _clients.append(q)
     with _log_lock:
-        replay = list(_log)  # 拷贝快照
+        replay = list(_log)  # 鎷疯礉蹇収
     return q, replay
 
 
 def unsubscribe(q: Queue):
-    """客户端断开连接时清理。"""
+    """瀹㈡埛绔柇寮€杩炴帴鏃舵竻鐞嗐€?""
     with _lock:
         if q in _clients:
             _clients.remove(q)
 
 
 def emit(event: str, data: dict):
-    """广播事件给所有已连接的 SSE 客户端。"""
+    """骞挎挱浜嬩欢缁欐墍鏈夊凡杩炴帴鐨?SSE 瀹㈡埛绔€?""
     payload = {"event": event, "data": data, "ts": datetime.now().isoformat()}
     raw = json.dumps(payload, ensure_ascii=False)
 
-    # 写入滚动日志（供新客户端重放）
-    with _log_lock:
+    # 鍐欏叆婊氬姩鏃ュ織锛堜緵鏂板鎴风閲嶆斁锛?    with _log_lock:
         _log.append(raw)
         if len(_log) > _MAX_LOG:
-            _log[:50] = []  # 批量裁剪头部，保留最新
-
-    # 广播给所有活跃客户端
+            _log[:50] = []  # 鎵归噺瑁佸壀澶撮儴锛屼繚鐣欐渶鏂?
+    # 骞挎挱缁欐墍鏈夋椿璺冨鎴风
     with _lock:
         dead = []
         for q in _clients:
@@ -62,11 +55,10 @@ def emit(event: str, data: dict):
 
 
 def format_sse(event_raw: str) -> str:
-    """将原始事件 payload 格式化为 SSE 协议文本。"""
+    """Format raw event payload as SSE protocol text."""
     try:
         obj = json.loads(event_raw)
-        evt = obj.get("event", "message")
-        dat = json.dumps(obj.get("data", {}), ensure_ascii=False)
-        return f"event: {evt}\ndata: {dat}\n\n"
+        dat = json.dumps(obj, ensure_ascii=False)
+        return "data: " + dat + "\n\n"
     except Exception:
-        return f"data: {event_raw}\n\n"
+        return "data: " + event_raw + "\n\n"

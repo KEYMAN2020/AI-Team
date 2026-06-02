@@ -1,23 +1,15 @@
-"""
-knowledge_base.py — 项目知识库 v2.0
+﻿"""
+knowledge_base.py 鈥?椤圭洰鐭ヨ瘑搴?v2.0
 ====================================
-分两层隔离 Agent 幻觉风险：
-
-  curated/  ← 人类编写，始终注入上下文（100% 信任）
-  auto/     ← Agent 自动生成，注入时带警告标记（可能幻觉）
-
-目录：
-  knowledge/
-  ├── curated/
-  │   ├── standards.md   编码规范
-  │   ├── glossary.md    领域词汇表
-  │   └── gotchas.md     种子踩坑经验（人类编写）
-  └── auto/
-      ├── gotchas.md     Agent 自动归档的坑
-      ├── decisions.md   Agent 生成的架构决策
-      ├── postmortems.md Agent 生成的故障复盘
-      └── _manifest.json 条目索引（谁、何时、是否已审查）
-"""
+鍒嗕袱灞傞殧绂?Agent 骞昏椋庨櫓锛?
+  curated/  鈫?浜虹被缂栧啓锛屽缁堟敞鍏ヤ笂涓嬫枃锛?00% 淇′换锛?  auto/     鈫?Agent 鑷姩鐢熸垚锛屾敞鍏ユ椂甯﹁鍛婃爣璁帮紙鍙兘骞昏锛?
+鐩綍锛?  knowledge/
+  鈹溾攢鈹€ curated/
+  鈹?  鈹溾攢鈹€ standards.md   缂栫爜瑙勮寖
+  鈹?  鈹溾攢鈹€ glossary.md    棰嗗煙璇嶆眹琛?  鈹?  鈹斺攢鈹€ gotchas.md     绉嶅瓙韪╁潙缁忛獙锛堜汉绫荤紪鍐欙級
+  鈹斺攢鈹€ auto/
+      鈹溾攢鈹€ gotchas.md     Agent 鑷姩褰掓。鐨勫潙
+      鈹溾攢鈹€ decisions.md   Agent 鐢熸垚鐨勬灦鏋勫喅绛?      鈹溾攢鈹€ postmortems.md Agent 鐢熸垚鐨勬晠闅滃鐩?      鈹斺攢鈹€ _manifest.json 鏉＄洰绱㈠紩锛堣皝銆佷綍鏃躲€佹槸鍚﹀凡瀹℃煡锛?"""
 
 import json
 import re
@@ -26,109 +18,93 @@ from datetime import datetime
 from pathlib import Path
 
 KB_DIR = Path("knowledge")
-_manifest_lock = threading.Lock()  # _record_in_manifest 并发保护
+_manifest_lock = threading.Lock()  # _record_in_manifest 骞跺彂淇濇姢
 CURATED_DIR = KB_DIR / "curated"
 AUTO_DIR    = KB_DIR / "auto"
 MANIFEST_PATH = AUTO_DIR / "_manifest.json"
 
-# curated/ 章节（人类编写，绝对信任）
-CURATED_SECTIONS = {
+# curated/ 绔犺妭锛堜汉绫荤紪鍐欙紝缁濆淇′换锛?CURATED_SECTIONS = {
     "standards": "standards.md",
     "glossary":  "glossary.md",
-    "gotchas":   "gotchas.md",  # 种子数据，不含 Agent 自动写入
+    "gotchas":   "gotchas.md",  # 绉嶅瓙鏁版嵁锛屼笉鍚?Agent 鑷姩鍐欏叆
+    "project": "silver-vitality-overview.md",
 }
 
-# auto/ 章节（Agent 生成，可能包含幻觉）
+# auto/ 绔犺妭锛圓gent 鐢熸垚锛屽彲鑳藉寘鍚够瑙夛級
 AUTO_SECTIONS = {
     "decisions":   "decisions.md",
     "gotchas":     "gotchas.md",
+    "project": "silver-vitality-overview.md",
     "postmortems": "postmortems.md",
 }
 
-# 每个角色读取的知识库章节（标注来源类型）
+# 姣忎釜瑙掕壊璇诲彇鐨勭煡璇嗗簱绔犺妭锛堟爣娉ㄦ潵婧愮被鍨嬶級
 ROLE_KB_SECTIONS = {
-    # ══ 硬编码 fallback（role_registry 不可用时使用） ══
-    "pm":        [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "product":   [("auto", "decisions"), ("curated", "glossary")],
-    "architect": [("auto", "decisions"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "ux":        [("curated", "standards"), ("curated", "glossary")],
-    "frontend":  [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "backend":   [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas"), ("auto", "decisions")],
-    "dba":       [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "devops":    [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "debug":     [("curated", "gotchas"), ("auto", "gotchas"), ("auto", "postmortems")],
-    "reviewer":  [("curated", "standards")],
-    "tester":    [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
+    # 鈺愨晲 纭紪鐮?fallback锛坮ole_registry 涓嶅彲鐢ㄦ椂浣跨敤锛?鈺愨晲
+    # 姣忎釜瑙掕壊閮借鍙栧綋鍓嶉」鐩杩?    "pm":        [("curated", "project"), ("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "product":   [("curated", "project"), ("auto", "decisions"), ("curated", "glossary")],
+    "architect": [("curated", "project"), ("auto", "decisions"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "ux":        [("curated", "project"), ("curated", "standards"), ("curated", "glossary")],
+    "frontend":  [("curated", "project"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "backend":   [("curated", "project"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas"), ("auto", "decisions")],
+    "dba":       [("curated", "project"), ("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "devops":    [("curated", "project"), ("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
+    "debug":     [("curated", "project"), ("curated", "gotchas"), ("auto", "gotchas"), ("auto", "postmortems")],
+    "reviewer":  [("curated", "project"), ("curated", "standards")],
+    "tester":    [("curated", "project"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
 }
 
-# ── 从 role_registry 覆盖知识库章节（优先） ──
-try:
-    from role_registry import get_role_kb_sections as _get_role_kb_sections, get_all_roles as _get_all_roles
-    for _role in _get_all_roles():
-        _reg_sections = _get_role_kb_sections(_role)
-        if _reg_sections:
-            ROLE_KB_SECTIONS[_role] = _reg_sections
-    del _get_role_kb_sections, _get_all_roles  # 清理模块级变量
-except ImportError:
-    pass
-
-# ── 初始化 ────────────────────────────────────────
+# 鈹€鈹€ 鍒濆鍖?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def init_knowledge_base(project_name: str = "") -> None:
-    """初始化知识库，创建 curated/ 和 auto/ 目录结构。"""
+    """鍒濆鍖栫煡璇嗗簱锛屽垱寤?curated/ 鍜?auto/ 鐩綍缁撴瀯銆?""
     CURATED_DIR.mkdir(parents=True, exist_ok=True)
     AUTO_DIR.mkdir(parents=True, exist_ok=True)
 
-    # —— curated/ ——
-    curated_defaults = {
+    # 鈥斺€?curated/ 鈥斺€?    curated_defaults = {
         "standards.md": _default_standards(),
         "gotchas.md":   _default_gotchas(),
-        "glossary.md":  "# 领域词汇表\n\n（暂无记录）\n",
+        "glossary.md":  "# 棰嗗煙璇嶆眹琛╘n\n锛堟殏鏃犺褰曪級\n",
     }
     for filename, content in curated_defaults.items():
         path = CURATED_DIR / filename
         if not path.exists():
             path.write_text(content, encoding="utf-8")
 
-    # —— auto/ ——
-    for filename in AUTO_SECTIONS.values():
+    # 鈥斺€?auto/ 鈥斺€?    for filename in AUTO_SECTIONS.values():
         path = AUTO_DIR / filename
         if not path.exists():
-            path.write_text(f"# {path.stem}\n\n（暂无自动生成条目）\n", encoding="utf-8")
+            path.write_text(f"# {path.stem}\n\n锛堟殏鏃犺嚜鍔ㄧ敓鎴愭潯鐩級\n", encoding="utf-8")
 
-    # —— manifest ——
-    if not MANIFEST_PATH.exists():
+    # 鈥斺€?manifest 鈥斺€?    if not MANIFEST_PATH.exists():
         MANIFEST_PATH.write_text(json.dumps({
-            "project": project_name or "未命名",
+            "project": project_name or "鏈懡鍚?,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "entries": [],
         }, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"[OK] 知识库已初始化：{KB_DIR}/ (curated + auto)")
+    print(f"[OK] 鐭ヨ瘑搴撳凡鍒濆鍖栵細{KB_DIR}/ (curated + auto)")
 
 
-# ── 读取 ─────────────────────────────────────────
+# 鈹€鈹€ 璇诲彇 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def read_section(section: str, source: str = "curated") -> str:
-    """读取指定来源的章节内容。source = 'curated' | 'auto'"""
+    """璇诲彇鎸囧畾鏉ユ簮鐨勭珷鑺傚唴瀹广€俿ource = 'curated' | 'auto'"""
     sections_map = CURATED_SECTIONS if source == "curated" else AUTO_SECTIONS
     base_dir = CURATED_DIR if source == "curated" else AUTO_DIR
     filename = sections_map.get(section)
     if not filename:
-        return f"[错误] 未知章节：{section}"
+        return f"[閿欒] 鏈煡绔犺妭锛歿section}"
     path = base_dir / filename
     if not path.exists():
-        return f"[{section}] 章节不存在"
+        return f"[{section}] 绔犺妭涓嶅瓨鍦?
     return path.read_text(encoding="utf-8")
 
 
 def build_kb_context(role: str) -> str:
     """
-    为指定角色构建知识库上下文。
-    - curated/ 内容不加警告（人类编写）
-    - auto/ 内容标注「未经人工审查，仅供参考」
-    自动解析别名。
-    """
+    涓烘寚瀹氳鑹叉瀯寤虹煡璇嗗簱涓婁笅鏂囥€?    - curated/ 鍐呭涓嶅姞璀﹀憡锛堜汉绫荤紪鍐欙級
+    - auto/ 鍐呭鏍囨敞銆屾湭缁忎汉宸ュ鏌ワ紝浠呬緵鍙傝€冦€?    鑷姩瑙ｆ瀽鍒悕銆?    """
     try:
         from role_registry import resolve_role as _resolve
         role = _resolve(role) or role
@@ -142,50 +118,50 @@ def build_kb_context(role: str) -> str:
     for source, sec in sections:
         content = read_section(sec, source)
         lines = content.split("\n")
-        # 过滤空行和文件级标题（# ），保留条目级标题（##）和内容
+        # 杩囨护绌鸿鍜屾枃浠剁骇鏍囬锛? 锛夛紝淇濈暀鏉＄洰绾ф爣棰橈紙##锛夊拰鍐呭
         body_lines = [l for l in lines if l.strip() and not re.match(r'^# [^#]', l)]
-        if not body_lines or body_lines[0].startswith("（暂无"):
+        if not body_lines or body_lines[0].startswith("锛堟殏鏃?):
             continue
 
         preview = "\n".join(body_lines[:15])
         if len(body_lines) > 15:
-            preview += f"\n... [共 {len(body_lines)} 行，完整内容见 knowledge/{source}/{sec}.md]"
+            preview += f"\n... [鍏?{len(body_lines)} 琛岋紝瀹屾暣鍐呭瑙?knowledge/{source}/{sec}.md]"
 
         if source == "curated":
-            parts.append(f"[知识库：{sec}]\n{preview}")
+            parts.append(f"[鐭ヨ瘑搴擄細{sec}]\n{preview}")
         else:
-            parts.append(f"[自动存档：{sec} —— [!] 以下为 Agent 自动生成，未经人工审查，可能有误，仅供参考]\n{preview}")
+            parts.append(f"[鑷姩瀛樻。锛歿sec} 鈥斺€?[!] 浠ヤ笅涓?Agent 鑷姩鐢熸垚锛屾湭缁忎汉宸ュ鏌ワ紝鍙兘鏈夎锛屼粎渚涘弬鑰僝\n{preview}")
 
     return "\n\n".join(parts) if parts else ""
 
 
-# ── 写入（curated/ — 人类维护）────────────────────
+# 鈹€鈹€ 鍐欏叆锛坈urated/ 鈥?浜虹被缁存姢锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def update_standards(section: str, content: str) -> None:
-    """更新编码规范。人类操作，写入 curated/。"""
+    """鏇存柊缂栫爜瑙勮寖銆備汉绫绘搷浣滐紝鍐欏叆 curated/銆?""
     path = CURATED_DIR / "standards.md"
     _ensure_exists(path)
     with open(path, "a", encoding="utf-8") as f:
         f.write(f"\n### {section}\n{content}\n")
-    print(f"[OK] 规范已更新（curated）：{section}")
+    print(f"[OK] 瑙勮寖宸叉洿鏂帮紙curated锛夛細{section}")
 
 
 def add_glossary(term: str, definition: str, example: str = "") -> None:
-    """添加领域词汇。人类操作，写入 curated/。"""
+    """娣诲姞棰嗗煙璇嶆眹銆備汉绫绘搷浣滐紝鍐欏叆 curated/銆?""
     path = CURATED_DIR / "glossary.md"
     _ensure_exists(path)
-    entry = f"\n**{term}**：{definition}"
+    entry = f"\n**{term}**锛歿definition}"
     if example:
-        entry += f"（例：{example}）"
+        entry += f"锛堜緥锛歿example}锛?
     entry += "\n"
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
 
 
-# ── 写入（auto/ — Agent 自动生成）─────────────────
+# 鈹€鈹€ 鍐欏叆锛坅uto/ 鈥?Agent 鑷姩鐢熸垚锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _record_in_manifest(file: str, title: str, added_by: str) -> None:
-    """在 manifest 中记录一条自动生成条目（便于审查）。线程安全。"""
+    """鍦?manifest 涓褰曚竴鏉¤嚜鍔ㄧ敓鎴愭潯鐩紙渚夸簬瀹℃煡锛夈€傜嚎绋嬪畨鍏ㄣ€?""
     if not MANIFEST_PATH.exists():
         return
     with _manifest_lock:
@@ -202,8 +178,8 @@ def _record_in_manifest(file: str, title: str, added_by: str) -> None:
 
 
 def add_adr(title: str, context: str, decision: str,
-            consequences: str, status: str = "已采纳") -> None:
-    """添加架构决策记录。Agent 调用，写入 auto/。"""
+            consequences: str, status: str = "宸查噰绾?) -> None:
+    """娣诲姞鏋舵瀯鍐崇瓥璁板綍銆侫gent 璋冪敤锛屽啓鍏?auto/銆?""
     path = AUTO_DIR / "decisions.md"
     _ensure_exists(path)
 
@@ -211,60 +187,58 @@ def add_adr(title: str, context: str, decision: str,
     adr_count = content.count("## ADR-") + 1
 
     entry = f"""
-## ADR-{adr_count:03d}：{title}
+## ADR-{adr_count:03d}锛歿title}
 
-**状态**：{status}
-**日期**：{datetime.now().strftime('%Y-%m-%d')}
-**来源**：Agent 生成，待审查
+**鐘舵€?*锛歿status}
+**鏃ユ湡**锛歿datetime.now().strftime('%Y-%m-%d')}
+**鏉ユ簮**锛欰gent 鐢熸垚锛屽緟瀹℃煡
 
-**背景**：{context}
+**鑳屾櫙**锛歿context}
 
-**决策**：{decision}
+**鍐崇瓥**锛歿decision}
 
-**影响**：{consequences}
+**褰卞搷**锛歿consequences}
 
 ---
 """
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
-    _record_in_manifest("auto/decisions.md", f"ADR-{adr_count:03d}：{title}", "agent")
-    print(f"[OK] ADR-{adr_count:03d} 已记录（auto）：{title}")
+    _record_in_manifest("auto/decisions.md", f"ADR-{adr_count:03d}锛歿title}", "agent")
+    print(f"[OK] ADR-{adr_count:03d} 宸茶褰曪紙auto锛夛細{title}")
 
 
 def add_gotcha(title: str, symptom: str, cause: str,
                solution: str, affected_roles: list = None) -> None:
     """
-    记录踩坑经验。Agent 调用（如 QA→DBG 循环），写入 auto/。
-    如需加入 curated/，人类审查后调用 promote_to_curated()。
-    """
+    璁板綍韪╁潙缁忛獙銆侫gent 璋冪敤锛堝 QA鈫扗BG 寰幆锛夛紝鍐欏叆 auto/銆?    濡傞渶鍔犲叆 curated/锛屼汉绫诲鏌ュ悗璋冪敤 promote_to_curated()銆?    """
     path = AUTO_DIR / "gotchas.md"
     _ensure_exists(path)
 
-    roles_str = "、".join(affected_roles) if affected_roles else "通用"
+    roles_str = "銆?.join(affected_roles) if affected_roles else "閫氱敤"
     entry = f"""
 ## {title}
 
-**影响角色**：{roles_str}
-**日期**：{datetime.now().strftime('%Y-%m-%d')}
-**来源**：Agent 自动生成，待审查
+**褰卞搷瑙掕壊**锛歿roles_str}
+**鏃ユ湡**锛歿datetime.now().strftime('%Y-%m-%d')}
+**鏉ユ簮**锛欰gent 鑷姩鐢熸垚锛屽緟瀹℃煡
 
-**症状**：{symptom}
+**鐥囩姸**锛歿symptom}
 
-**根因**：{cause}
+**鏍瑰洜**锛歿cause}
 
-**解决方案**：{solution}
+**瑙ｅ喅鏂规**锛歿solution}
 
 ---
 """
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
     _record_in_manifest("auto/gotchas.md", title, "agent")
-    print(f"[OK] 坑已记录（auto）：{title}")
+    print(f"[OK] 鍧戝凡璁板綍锛坅uto锛夛細{title}")
 
 
 def add_postmortem(incident: str, timeline: str, root_cause: str,
                    impact: str, action_items: list) -> None:
-    """记录故障复盘。Agent 调用，写入 auto/。"""
+    """璁板綍鏁呴殰澶嶇洏銆侫gent 璋冪敤锛屽啓鍏?auto/銆?""
     path = AUTO_DIR / "postmortems.md"
     _ensure_exists(path)
 
@@ -272,29 +246,28 @@ def add_postmortem(incident: str, timeline: str, root_cause: str,
     entry = f"""
 ## {incident}
 
-**日期**：{datetime.now().strftime('%Y-%m-%d')}
-**影响**：{impact}
-**来源**：Agent 生成，待审查
+**鏃ユ湡**锛歿datetime.now().strftime('%Y-%m-%d')}
+**褰卞搷**锛歿impact}
+**鏉ユ簮**锛欰gent 鐢熸垚锛屽緟瀹℃煡
 
-**时间线**：{timeline}
+**鏃堕棿绾?*锛歿timeline}
 
-**根因**：{root_cause}
+**鏍瑰洜**锛歿root_cause}
 
-**行动项**：
-{items_str}
+**琛屽姩椤?*锛?{items_str}
 
 ---
 """
     with open(path, "a", encoding="utf-8") as f:
         f.write(entry)
     _record_in_manifest("auto/postmortems.md", incident, "agent")
-    print(f"[OK] 故障复盘已记录（auto）：{incident}")
+    print(f"[OK] 鏁呴殰澶嶇洏宸茶褰曪紙auto锛夛細{incident}")
 
 
-# ── 审查与提升 ───────────────────────────────────
+# 鈹€鈹€ 瀹℃煡涓庢彁鍗?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def list_pending_review() -> list[dict]:
-    """列出所有待人工审查的 auto/ 条目。"""
+    """鍒楀嚭鎵€鏈夊緟浜哄伐瀹℃煡鐨?auto/ 鏉＄洰銆?""
     if not MANIFEST_PATH.exists():
         return []
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -303,37 +276,34 @@ def list_pending_review() -> list[dict]:
 
 def promote_to_curated(file: str, entry_title: str) -> bool:
     """
-    人工审查后，将 auto/ 中的条目提升到 curated/。
-    从 auto 文件删除该条目，追加到对应的 curated 文件。
-    """
-    # 确定 auto 和 curated 路径
+    浜哄伐瀹℃煡鍚庯紝灏?auto/ 涓殑鏉＄洰鎻愬崌鍒?curated/銆?    浠?auto 鏂囦欢鍒犻櫎璇ユ潯鐩紝杩藉姞鍒板搴旂殑 curated 鏂囦欢銆?    """
+    # 纭畾 auto 鍜?curated 璺緞
     auto_path = AUTO_DIR / (file.split("/")[-1] if "/" in file else file)
     section_name = auto_path.stem  # e.g. "gotchas"
     curated_path = CURATED_DIR / f"{section_name}.md"
 
     if not auto_path.exists():
-        print(f"[ERROR] auto 文件不存在：{auto_path}")
+        print(f"[ERROR] auto 鏂囦欢涓嶅瓨鍦細{auto_path}")
         return False
 
-    # 从 auto 文件中提取该条目
+    # 浠?auto 鏂囦欢涓彁鍙栬鏉＄洰
     content = auto_path.read_text(encoding="utf-8")
     pattern = rf"## {re.escape(entry_title)}.*?(?=## |\Z)"
     m = re.search(pattern, content, re.DOTALL)
     if not m:
-        print(f"[ERROR] 未找到条目：{entry_title}")
+        print(f"[ERROR] 鏈壘鍒版潯鐩細{entry_title}")
         return False
 
-    # 追加到 curated（去掉「Agent 生成」标记）
-    entry = m.group(0).replace("**来源**：Agent 生成，待审查\n", "")
+    # 杩藉姞鍒?curated锛堝幓鎺夈€孉gent 鐢熸垚銆嶆爣璁帮級
+    entry = m.group(0).replace("**鏉ユ簮**锛欰gent 鐢熸垚锛屽緟瀹℃煡\n", "")
     _ensure_exists(curated_path)
     with open(curated_path, "a", encoding="utf-8") as f:
         f.write(entry)
 
-    # 从 auto 文件中移除
-    new_content = content[:m.start()] + content[m.end():]
+    # 浠?auto 鏂囦欢涓Щ闄?    new_content = content[:m.start()] + content[m.end():]
     auto_path.write_text(new_content, encoding="utf-8")
 
-    # 更新 manifest（线程安全）
+    # 鏇存柊 manifest锛堢嚎绋嬪畨鍏級
     if MANIFEST_PATH.exists():
         with _manifest_lock:
             manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -344,120 +314,87 @@ def promote_to_curated(file: str, entry_title: str) -> bool:
                     break
             MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"[OK] 已提升到 curated：{entry_title}")
+    print(f"[OK] 宸叉彁鍗囧埌 curated锛歿entry_title}")
     return True
 
 
-# ── 默认内容（人类编写）──────────────────────────
+# 鈹€鈹€ 榛樿鍐呭锛堜汉绫荤紪鍐欙級鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _default_standards() -> str:
-    return """# 编码规范
+    return """# 缂栫爜瑙勮寖
 
-> 所有成员遵守本规范。CR（代码审查员）在 Review 时以此为基准。
+> 鎵€鏈夋垚鍛橀伒瀹堟湰瑙勮寖銆侰R锛堜唬鐮佸鏌ュ憳锛夊湪 Review 鏃朵互姝や负鍩哄噯銆?
+## 閫氱敤瑙勮寖
 
-## 通用规范
+- **鍛藉悕**锛氬彉閲?鍑芥暟鐢?camelCase锛圝S/TS锛夋垨 snake_case锛圥ython锛夛紝绫荤敤 PascalCase
+- **鍑芥暟闀垮害**锛氬崟涓嚱鏁颁笉瓒呰繃 50 琛岋紝瓒呰繃鍒欐媶鍒?- **娉ㄩ噴**锛氬叕鍏卞嚱鏁板繀椤绘湁 docstring/JSDoc锛屽鏉傞€昏緫蹇呴』鏈夎鍐呮敞閲?- **榄旀硶鏁板瓧**锛氱姝紝鎻愬彇涓哄叿鍚嶅父閲?- **閿欒澶勭悊**锛氫笉鍏佽绌?catch锛岃嚦灏戣褰曟棩蹇?- **鎻愪氦淇℃伅**锛歚[绫诲瀷] 绠€鐭弿杩癭锛岀被鍨嬩负 feat/fix/refactor/test/docs/chore
 
-- **命名**：变量/函数用 camelCase（JS/TS）或 snake_case（Python），类用 PascalCase
-- **函数长度**：单个函数不超过 50 行，超过则拆分
-- **注释**：公共函数必须有 docstring/JSDoc，复杂逻辑必须有行内注释
-- **魔法数字**：禁止，提取为具名常量
-- **错误处理**：不允许空 catch，至少记录日志
-- **提交信息**：`[类型] 简短描述`，类型为 feat/fix/refactor/test/docs/chore
+## 鍓嶇瑙勮寖锛團E锛?
+- 缁勪欢鏂囦欢锛歅ascalCase锛屾瘡鏂囦欢涓€涓粍浠?- Props 蹇呴』鏈夌被鍨嬪０鏄庯紙TypeScript 鎴?PropTypes锛?- 绂佹鍦ㄧ粍浠跺唴鐩存帴璋冪敤 API锛岀粺涓€閫氳繃 service 灞?- CSS锛氫娇鐢ㄩ」鐩害瀹氱殑 CSS-in-JS 鎴?CSS Module锛岀姝㈠唴鑱旀牱寮忥紙闄ゅ姩鎬佸€硷級
+- 鎵€鏈夌敤鎴疯緭鍏ュ繀椤诲仛 XSS 闃叉姢
+- 姣忎釜缁勪欢蹇呴』鏈夊搴旂殑鍗曞厓娴嬭瘯鏂囦欢锛?.test.tsx锛?
+## 鍚庣瑙勮寖锛圔E锛?
+- API 鍝嶅簲鏍煎紡缁熶竴锛歚{"data": ..., "code": 0, "msg": "ok"}`
+- 閿欒鐮佸畾涔夊湪 `constants/errors.py` 涓紝绂佹纭紪鐮?- 鏁版嵁搴撴搷浣滃繀椤婚€氳繃 ORM锛岀姝㈡嫾鎺?SQL 瀛楃涓?- 鏁忔劅瀛楁锛堝瘑鐮併€乼oken锛夌姝㈠嚭鐜板湪鏃ュ織涓?- 鎵€鏈夊閮ㄨ緭鍏ュ繀椤荤粡杩?Pydantic/Zod 绛夋牎楠?- 姣忎釜 service 鏂规硶蹇呴』鏈夊崟鍏冩祴璇曪紝瑕嗙洊姝ｅ悜+寮傚父璺緞
 
-## 前端规范（FE）
+## 鏁版嵁搴撹鑼冿紙DBA/BE锛?
+- 琛ㄥ悕锛氬鏁?snake_case锛坲sers, order_items锛?- 蹇呭～瀛楁锛歩d銆乧reated_at銆乽pdated_at
+- 澶栭敭瀛楁鍛藉悕锛歚{table_name}_id`
+- 绱㈠紩鍛藉悕锛歚idx_{table}_{field}`
+- Migration 蹇呴』鍖呭惈鍥炴粴鑴氭湰
 
-- 组件文件：PascalCase，每文件一个组件
-- Props 必须有类型声明（TypeScript 或 PropTypes）
-- 禁止在组件内直接调用 API，统一通过 service 层
-- CSS：使用项目约定的 CSS-in-JS 或 CSS Module，禁止内联样式（除动态值）
-- 所有用户输入必须做 XSS 防护
-- 每个组件必须有对应的单元测试文件（*.test.tsx）
-
-## 后端规范（BE）
-
-- API 响应格式统一：`{"data": ..., "code": 0, "msg": "ok"}`
-- 错误码定义在 `constants/errors.py` 中，禁止硬编码
-- 数据库操作必须通过 ORM，禁止拼接 SQL 字符串
-- 敏感字段（密码、token）禁止出现在日志中
-- 所有外部输入必须经过 Pydantic/Zod 等校验
-- 每个 service 方法必须有单元测试，覆盖正向+异常路径
-
-## 数据库规范（DBA/BE）
-
-- 表名：复数 snake_case（users, order_items）
-- 必填字段：id、created_at、updated_at
-- 外键字段命名：`{table_name}_id`
-- 索引命名：`idx_{table}_{field}`
-- Migration 必须包含回滚脚本
-
-## 测试规范（QA/FE/BE）
-
-- 单元测试覆盖率目标：核心逻辑 ≥ 80%
-- 测试命名：`test_[被测函数]_[场景]_[预期结果]`
-- 禁止在测试中连接真实数据库，使用 mock 或测试数据库
-- 每个 Bug 修复必须附带回归测试用例
+## 娴嬭瘯瑙勮寖锛圦A/FE/BE锛?
+- 鍗曞厓娴嬭瘯瑕嗙洊鐜囩洰鏍囷細鏍稿績閫昏緫 鈮?80%
+- 娴嬭瘯鍛藉悕锛歚test_[琚祴鍑芥暟]_[鍦烘櫙]_[棰勬湡缁撴灉]`
+- 绂佹鍦ㄦ祴璇曚腑杩炴帴鐪熷疄鏁版嵁搴擄紝浣跨敤 mock 鎴栨祴璇曟暟鎹簱
+- 姣忎釜 Bug 淇蹇呴』闄勫甫鍥炲綊娴嬭瘯鐢ㄤ緥
 """
 
 
 def _default_gotchas() -> str:
-    """人类编写的种子坑，Agent 不会自动改这里。"""
-    return """# 已知坑与解决方案
+    """浜虹被缂栧啓鐨勭瀛愬潙锛孉gent 涓嶄細鑷姩鏀硅繖閲屻€?""
+    return """# 宸茬煡鍧戜笌瑙ｅ喅鏂规
 
-> 以下为人类整理的种子经验。Agent 自动归档的坑在 auto/gotchas.md。
+> 浠ヤ笅涓轰汉绫绘暣鐞嗙殑绉嶅瓙缁忛獙銆侫gent 鑷姩褰掓。鐨勫潙鍦?auto/gotchas.md銆?
+## 澶фā鍨嬭緭鍑烘牸寮忎笉绋冲畾
 
-## 大模型输出格式不稳定
+**褰卞搷瑙掕壊**锛氶€氱敤
+**鏃ユ湡**锛?026-05-12
+**鏉ユ簮**锛氫汉宸ユ€荤粨
 
-**影响角色**：通用
-**日期**：2026-05-12
-**来源**：人工总结
-
-**症状**：LLM 输出中 <dag> JSON 格式错误、state_update 解析失败、偶尔不按模板输出
-
-**根因**：非推理模型（temperature=0）输出仍有随机性；推理模型在长上下文下会「遗忘」格式要求
-
-**解决方案**：
-1. 关键标签（<dag>、<state_update>）用独立代码块包裹
-2. runner 层的 _extract_dag / parse_state_update 永远有 fallback 逻辑
-3. 对 JSON 字段做 json.JSONDecodeError 容错
+**鐥囩姸**锛歀LM 杈撳嚭涓?<dag> JSON 鏍煎紡閿欒銆乻tate_update 瑙ｆ瀽澶辫触銆佸伓灏斾笉鎸夋ā鏉胯緭鍑?
+**鏍瑰洜**锛氶潪鎺ㄧ悊妯″瀷锛坱emperature=0锛夎緭鍑轰粛鏈夐殢鏈烘€э紱鎺ㄧ悊妯″瀷鍦ㄩ暱涓婁笅鏂囦笅浼氥€岄仐蹇樸€嶆牸寮忚姹?
+**瑙ｅ喅鏂规**锛?1. 鍏抽敭鏍囩锛?dag>銆?state_update>锛夌敤鐙珛浠ｇ爜鍧楀寘瑁?2. runner 灞傜殑 _extract_dag / parse_state_update 姘歌繙鏈?fallback 閫昏緫
+3. 瀵?JSON 瀛楁鍋?json.JSONDecodeError 瀹归敊
 
 ---
 
-## Sub_requests 循环爆炸
+## Sub_requests 寰幆鐖嗙偢
 
-**影响角色**：PM, UX, ARCHITECT
-**日期**：2026-05-12
-**来源**：人工总结
+**褰卞搷瑙掕壊**锛歅M, UX, ARCHITECT
+**鏃ユ湡**锛?026-05-12
+**鏉ユ簮**锛氫汉宸ユ€荤粨
 
-**症状**：Agent A 发 sub_request 给 Agent B，Agent B 再发 sub_request 给 Agent C，
-导致 token 消耗剧增、超时
-
-**根因**：sub_request 嵌套调用，没有深度限制
-
-**解决方案**：
-1. MAX_SUB_REQUESTS=3 限制单 Agent 发起的 sub_request 数量
-2. sub_request 不递归（_handle_sub_requests 不处理 sub agent 输出中的 sub_requests）
-3. 如果信息不足，Agent 应在输出中标注「缺少 XXX，建议下游补充」
-
+**鐥囩姸**锛欰gent A 鍙?sub_request 缁?Agent B锛孉gent B 鍐嶅彂 sub_request 缁?Agent C锛?瀵艰嚧 token 娑堣€楀墽澧炪€佽秴鏃?
+**鏍瑰洜**锛歴ub_request 宓屽璋冪敤锛屾病鏈夋繁搴﹂檺鍒?
+**瑙ｅ喅鏂规**锛?1. MAX_SUB_REQUESTS=3 闄愬埗鍗?Agent 鍙戣捣鐨?sub_request 鏁伴噺
+2. sub_request 涓嶉€掑綊锛坃handle_sub_requests 涓嶅鐞?sub agent 杈撳嚭涓殑 sub_requests锛?3. 濡傛灉淇℃伅涓嶈冻锛孉gent 搴斿湪杈撳嚭涓爣娉ㄣ€岀己灏?XXX锛屽缓璁笅娓歌ˉ鍏呫€?
 ---
 
-## 工具调用死循环
+## 宸ュ叿璋冪敤姝诲惊鐜?
+**褰卞搷瑙掕壊**锛欶RONTEND, BACKEND, DEVOPS
+**鏃ユ湡**锛?026-05-12
+**鏉ユ簮**锛氫汉宸ユ€荤粨
 
-**影响角色**：FRONTEND, BACKEND, DEVOPS
-**日期**：2026-05-12
-**来源**：人工总结
+**鐥囩姸**锛欰gent 鍦?tool_loop 涓弽澶嶈鍙栧悓涓€鏂囦欢銆佸惊鐜皟鐢?web_search 鐩稿悓鍏抽敭璇?
+**鏍瑰洜**锛氭ā鍨嬪湪 tool_use 鈫?tool_result 寰幆涓棤娉曟敹鏁涳紝鍙嶅瑕佹眰鍚屼竴鎿嶄綔
 
-**症状**：Agent 在 tool_loop 中反复读取同一文件、循环调用 web_search 相同关键词
-
-**根因**：模型在 tool_use → tool_result 循环中无法收敛，反复要求同一操作
-
-**解决方案**：
-1. max_iter=5 硬上限
-2. 如果达到上限，最后请求一次不传 tools（让模型输出纯文本）
-3. 工具返回结果包含有用信息后，模型应继续文本输出而非重复调用
+**瑙ｅ喅鏂规**锛?1. max_iter=5 纭笂闄?2. 濡傛灉杈惧埌涓婇檺锛屾渶鍚庤姹備竴娆′笉浼?tools锛堣妯″瀷杈撳嚭绾枃鏈級
+3. 宸ュ叿杩斿洖缁撴灉鍖呭惈鏈夌敤淇℃伅鍚庯紝妯″瀷搴旂户缁枃鏈緭鍑鸿€岄潪閲嶅璋冪敤
 """
 
 
-# ── 辅助 ─────────────────────────────────────────
+# 鈹€鈹€ 杈呭姪 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _ensure_exists(path: Path) -> None:
     if not path.exists():

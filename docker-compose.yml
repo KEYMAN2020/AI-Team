@@ -1,17 +1,13 @@
+﻿# =============================================================================
+# docker-compose.yml 鈥?AI-TeaM 澶?Agent 鍗忎綔骞冲彴
 # =============================================================================
-# docker-compose.yml — AI-TeaM 多 Agent 协作平台
-# =============================================================================
-# 用法：
-#   docker compose up -d                    # 启动所有服务
-#   docker compose logs -f                  # 查看日志
-#   docker compose down                     # 停止所有服务
-#   docker compose restart                  # 重启所有服务
-# =============================================================================
+# 鐢ㄦ硶锛?#   docker compose up -d                    # 鍚姩鎵€鏈夋湇鍔?#   docker compose logs -f                  # 鏌ョ湅鏃ュ織
+#   docker compose down                     # 鍋滄鎵€鏈夋湇鍔?#   docker compose restart                  # 閲嶅惎鎵€鏈夋湇鍔?# =============================================================================
 
 version: "3.8"
 
 services:
-  # ── 主应用服务 ──────────────────────────────────────
+  # 鈹€鈹€ 涓诲簲鐢ㄦ湇鍔?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   app:
     build:
       context: .
@@ -27,26 +23,32 @@ services:
       - AI_TEAM_HOST=0.0.0.0
       - AI_TEAM_PORT=8123
       - TZ=Asia/Shanghai
-      # API Keys（从系统环境变量传入，不要写在 .env 文件中）
+      # API Keys锛堜粠绯荤粺鐜鍙橀噺浼犲叆锛屼笉瑕佸啓鍦?.env 鏂囦欢涓級
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      # 运行环境
+      - AI_TEAM_BASE_URL=https://gsykj.com/v1
+      - AI_TEAM_API_KEY=sk-ed86b4376a8eb071db86400eeaf88297db790967a7860740fc28fedded8be3aa
+      # 杩愯鐜
       - APP_ENV=${APP_ENV:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      # 持久化运行时数据
+      # 鎸佷箙鍖栬繍琛屾椂鏁版嵁
       - ai-team-state:/app/state
       - ai-team-outputs:/app/outputs
       - ai-team-logs:/app/logs
-      # 配置文件（只读挂载，方便热更新）
+      # 閰嶇疆鏂囦欢锛堝彧璇绘寕杞斤紝鏂逛究鐑洿鏂帮級
       - ./config:/app/config:ro
-      # 知识库（curated 由人类维护，auto 由 Agent 生成）
-      - ./knowledge/curated:/app/knowledge/curated:ro
+      # 鐭ヨ瘑搴擄紙curated 鐢变汉绫荤淮鎶わ紝auto 鐢?Agent 鐢熸垚锛?      - ./knowledge/curated:/app/knowledge/curated:ro
       - ai-team-knowledge-auto:/app/knowledge/auto
+      # Dashboard锛堟寕杞芥湰鍦扮洰褰曚互鏀寔鐑洿鏂帮級
+      - ./web_dashboard:/app/web_dashboard:ro
+      - ./web_portal:/app/web_portal:ro
+      # 鐑洿鏂版寕杞斤紙浠ｇ爜淇敼鍚?docker compose restart app 鍗冲彲鐢熸晥锛?      - ./server.py:/app/server.py:ro
+      - ./references:/app/references:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8123/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8123/health')" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -58,7 +60,7 @@ services:
         max-file: "3"
     networks:
       - ai-team-net
-    # 资源限制
+    # 璧勬簮闄愬埗
     deploy:
       resources:
         limits:
@@ -68,7 +70,7 @@ services:
           cpus: "0.5"
           memory: 512M
 
-  # ── Nginx 反向代理（可选，生产环境推荐）────────────
+  # 鈹€鈹€ Nginx 鍙嶅悜浠ｇ悊锛堝彲閫夛紝鐢熶骇鐜鎺ㄨ崘锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   nginx:
     image: nginx:1.25-alpine
     container_name: ai-team-nginx
@@ -79,7 +81,7 @@ services:
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ai-team-nginx-logs:/var/log/nginx
-      # SSL 证书（生产环境）
+      # SSL 璇佷功锛堢敓浜х幆澧冿級
       - ./deploy/ssl:/etc/nginx/ssl:ro
     depends_on:
       app:
@@ -92,7 +94,7 @@ services:
     networks:
       - ai-team-net
 
-  # ── Watchtower（自动更新镜像，仅生产环境）─────────
+  # 鈹€鈹€ Watchtower锛堣嚜鍔ㄦ洿鏂伴暅鍍忥紝浠呯敓浜х幆澧冿級鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   watchtower:
     image: containrrr/watchtower:latest
     container_name: ai-team-watchtower
@@ -110,13 +112,13 @@ services:
     networks:
       - ai-team-net
 
-# ── 网络 ──────────────────────────────────────────────
+# 鈹€鈹€ 缃戠粶 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 networks:
   ai-team-net:
     name: ai-team-network
     driver: bridge
 
-# ── 数据卷 ────────────────────────────────────────────
+# 鈹€鈹€ 鏁版嵁鍗?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 volumes:
   ai-team-state:
     name: ai-team-state-data
