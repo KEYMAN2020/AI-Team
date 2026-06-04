@@ -1,44 +1,27 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: reviewer
-description: 代码审查 — 安全审计、代码质量、最佳实践检查
+description: "代码审查员 — 代码质量、风格一致性、规范符合度、设计合理性"
 aliases:
 - cr
 model_config:
-  deepseek:
-    model: deepseek-chat
-    temperature: 0.0
-    thinking: false
+  any:
+    model: deepseek-v4-pro
+    temperature: 0.1
     timeout: 300
     text_tool_compat: true
-  claude:
-    model: claude-opus-4-20250514
-    temperature: 0.0
-    thinking: true
-    budget: 2000
-    timeout: 300
-  openai:
-    model: gpt-4o
-    temperature: 0.0
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash
-    temperature: 0.0
-    timeout: 300
-  any:
-    model: gpt-5.5
-    temperature: 0.0
-    timeout: 300
 tools:
 - file_read
-- diff_view
-- web_search
 - resource_search
-- file_write
 kb_sections:
 - source: curated
+  section: project
+- source: curated
   section: standards
+- source: curated
+  section: gotchas
+- source: auto
+  section: decisions
 resource_categories:
-- security
 - backend
-- frontend
-- testing
+codebase_context: true
+schema_context: false

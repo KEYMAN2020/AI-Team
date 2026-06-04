@@ -854,7 +854,13 @@ def _api_call_with_logging(client, kwargs: dict, _role: str, iteration: int):
 def _handle_structured_tool_calls(kwargs: dict, msg):
     """处理模型返回的 structured tool_calls，追加对话并执行工具。"""
     import json as _json_mod
-    kwargs["messages"].append(msg.model_dump())
+    d = msg.model_dump()
+    # DeepSeek reasoning_content 不在 model_dump 中，需手动保留
+    if 'reasoning_content' not in d:
+        rc = getattr(msg, 'reasoning_content', None) or (msg.model_extra or {}).get('reasoning_content', None)
+        if rc:
+            d['reasoning_content'] = rc
+    kwargs["messages"].append(d)
     for tc in msg.tool_calls:
         try:
             args = _json_mod.loads(tc.function.arguments)
@@ -882,11 +888,16 @@ def _try_text_compat_tool_calls(kwargs: dict, msg, _avail, _role: str, iteration
         [t["name"] for t in text_tools]
     )
     stc_list = _build_synthetic_tool_calls(text_tools, "text_compat")
-    kwargs["messages"].append({
+    # DeepSeek 需要保留 reasoning_content 才能做多轮对话
+    reasoning_content = getattr(msg, 'reasoning_content', None) or (msg.model_extra or {}).get('reasoning_content', None)
+    asst_msg = {
         "role": "assistant",
         "content": msg.content,
         "tool_calls": stc_list,
-    })
+    }
+    if reasoning_content:
+        asst_msg["reasoning_content"] = reasoning_content
+    kwargs["messages"].append(asst_msg)
     for tt, stc in zip(text_tools, stc_list):
         result = execute_tool(tt["name"], tt["arguments"])
         kwargs["messages"].append({

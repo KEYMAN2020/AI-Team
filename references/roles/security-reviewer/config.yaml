@@ -1,17 +1,16 @@
 # 角色配置 — ai-team-everything
-name: architect
-description: "架构师 — 系统架构设计、API契约、技术选型、数据流"
+name: security-reviewer
+description: "安全审查员 — 鉴权安全、数据保护、合规检查、防攻击"
 aliases:
-- arch
+- sec
 model_config:
   any:
     model: deepseek-v4-pro
-    temperature: 0.2
+    temperature: 0.1
     timeout: 300
     text_tool_compat: true
 tools:
 - file_read
-- file_write
 - resource_search
 - web_search
 kb_sections:
@@ -21,9 +20,9 @@ kb_sections:
   section: standards
 - source: curated
   section: gotchas
-- source: auto
-  section: decisions
+- source: curated
+  section: schema
 resource_categories:
-- architecture
+- security
 codebase_context: true
-schema_context: false
+schema_context: true

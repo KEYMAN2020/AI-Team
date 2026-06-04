@@ -1,0 +1,10 @@
+def format_sse(event_raw: str) -> str:
+    Format raw event payload as SSE protocol text.
+    try:
+        obj = json.loads(event_raw)
+        dat = json.dumps(obj, ensure_ascii=False)
+        sse = data:  + dat + nn
+        return sse
+    except Exception:
+        sse = data:  + event_raw + nn
+        return sse

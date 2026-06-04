@@ -276,6 +276,7 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
         provider = data.get("provider")
         project_name = data.get("project_name", f"n8n_{datetime.now().strftime('%m%d_%H%M')}")
         webhook_url = data.get("webhook_url")
+        clean = data.get("clean", False)  # â æ°å¢ï¼å¼ºå¶æ¸çæ§ç¶æ
 
         # 在后台线程中执行
         task_id = f"task_{int(time.time())}"
@@ -291,7 +292,7 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
 
         thread = threading.Thread(
             target=_run_async_task,
-            args=(task_id, task_desc, project_name, provider, webhook_url),
+            args=(task_id, task_desc, project_name, provider, webhook_url, clean),
             daemon=True,
         )
         thread.start()
@@ -442,7 +443,8 @@ class TeamHTTPHandler(BaseHTTPRequestHandler):
 # ═══════════════════════════════════════════════════════
 
 def _run_async_task(task_id: str, task_desc: str, project_name: str,
-                    provider: str | None, webhook_url: str | None):
+                    provider: str | None, webhook_url: str | None,
+                    clean: bool = False):
     """在后台线程中运行 asyncio 事件循环。"""
     global _project_running
 
@@ -466,6 +468,33 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
                     _call_webhook(webhook_url, task_id, "error", "项目正在执行中")
                 return
             _project_running = True
+
+        # ---- cleanup old state when clean=True ------------------------------
+        if MASTER_PATH.exists() and clean:
+            import shutil
+            from pathlib import Path
+            state_dir = MASTER_PATH.parent
+            print(f"[clean] cleaning old state: {state_dir}")
+            for d in [state_dir / "snapshots", state_dir / "summaries"]:
+                if d.exists():
+                    shutil.rmtree(d)
+            for f in state_dir.glob("_*.json"):
+                f.unlink()
+            for fn in ["messages.jsonl"]:
+                fp = state_dir / fn
+                if fp.exists():
+                    fp.unlink()
+            if MASTER_PATH.exists():
+                MASTER_PATH.unlink()
+                print("  [clean] removed master.json, starting fresh")
+            outputs_dir = Path("/app/outputs")
+            if outputs_dir.exists():
+                for f in outputs_dir.iterdir():
+                    if f.is_file():
+                        f.unlink()
+                    elif f.is_dir():
+                        shutil.rmtree(f)
+            print("  [clean] state cleanup complete")
 
         # 断点续跑检测：如果 master.json 存在且项目未完成，直接恢复
         if MASTER_PATH.exists():
@@ -493,6 +522,12 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
         event_bus.emit("project_initialized", {"project_name": project_name, "task": task_desc[:120]})
 
         # 运行 DAG
+        
+        # ---- codebase_snapshot ----
+        try:
+            _ensure_codebase_snapshot(task_desc)
+        except Exception as e:
+            print(f"  [codebase_snapshot] warning: clone failed ({e}), continuing")
         result = asyncio.run(run_project(task_desc, provider=provider))
 
         # 更新任务状态
@@ -529,6 +564,40 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
     finally:
         with _project_lock:
             _project_running = False
+
+
+
+def _ensure_codebase_snapshot(task_desc: str) -> None:
+    """Clone existing codebase so roles can read existing code.
+    Looks for codebase_snapshot hint in task description.
+    Clones into /app/codebase/ for in-container access.
+    """
+    import subprocess, os
+    from pathlib import Path
+
+    if b"codebase_snapshot" not in task_desc.encode() and b"codebase" not in task_desc.encode():
+        return
+
+    target = Path('/app/codebase')
+    repo = 'https://github.com/KEYMAN2020/BeEnjoyIng.git'
+    branch = '2026_0602_dev'
+
+    if target.exists() and list(target.iterdir()):
+        print(f'  [codebase_snapshot] codebase already exists, skipping clone')
+        return
+
+    target.mkdir(parents=True, exist_ok=True)
+    print(f'  [codebase_snapshot] cloning {repo} branch={branch}...')
+    result = subprocess.run(
+        ['git', 'clone', '--depth', '1', '-b', branch, repo, str(target)],
+        capture_output=True, text=True, timeout=120
+    )
+    if result.returncode == 0:
+        nfiles = len(list(target.rglob('*')))
+        print(f'  [codebase_snapshot] clone OK ({nfiles} files)')
+    else:
+        print(f'  [codebase_snapshot] clone failed: {result.stderr[:200]}')
+        raise RuntimeError(f'git clone failed: {result.stderr[:200]}')
 
 
 def _call_webhook(url: str, task_id: str, status: str, error: str = ""):

@@ -36,41 +36,22 @@ CURATED_SECTIONS = {
     "standards": "standards.md",
     "glossary":  "glossary.md",
     "gotchas":   "gotchas.md",  # 种子数据，不含 Agent 自动写入
+    "project": "silver-vitality-overview.md",
+    "schema":    "schema.md",
 }
 
 # auto/ 章节（Agent 生成，可能包含幻觉）
 AUTO_SECTIONS = {
     "decisions":   "decisions.md",
     "gotchas":     "gotchas.md",
+    "project": "silver-vitality-overview.md",
     "postmortems": "postmortems.md",
 }
 
-# 每个角色读取的知识库章节（标注来源类型）
-ROLE_KB_SECTIONS = {
-    # ══ 硬编码 fallback（role_registry 不可用时使用） ══
-    "pm":        [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "product":   [("auto", "decisions"), ("curated", "glossary")],
-    "architect": [("auto", "decisions"), ("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "ux":        [("curated", "standards"), ("curated", "glossary")],
-    "frontend":  [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "backend":   [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas"), ("auto", "decisions")],
-    "dba":       [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "devops":    [("auto", "decisions"), ("curated", "gotchas"), ("auto", "gotchas")],
-    "debug":     [("curated", "gotchas"), ("auto", "gotchas"), ("auto", "postmortems")],
-    "reviewer":  [("curated", "standards")],
-    "tester":    [("curated", "standards"), ("curated", "gotchas"), ("auto", "gotchas")],
-}
-
-# ── 从 role_registry 覆盖知识库章节（优先） ──
-try:
-    from role_registry import get_role_kb_sections as _get_role_kb_sections, get_all_roles as _get_all_roles
-    for _role in _get_all_roles():
-        _reg_sections = _get_role_kb_sections(_role)
-        if _reg_sections:
-            ROLE_KB_SECTIONS[_role] = _reg_sections
-    del _get_role_kb_sections, _get_all_roles  # 清理模块级变量
-except ImportError:
-    pass
+# 角色 kb_sections 统一从 roles/<name>/config.yaml 读取（role_registry）。
+# 不再硬编码。如需修改，改 config.yaml 即可。
+# 保留命名空间占位，防止旧代码引用报错
+ROLE_KB_SECTIONS = {}
 
 # ── 初始化 ────────────────────────────────────────
 
@@ -134,7 +115,12 @@ def build_kb_context(role: str) -> str:
         role = _resolve(role) or role
     except ImportError:
         pass
-    sections = ROLE_KB_SECTIONS.get(role, [])
+    try:
+        from role_registry import get_role_kb_sections as _get_sections
+        sections = _get_sections(role)
+    except ImportError:
+        sections = ROLE_KB_SECTIONS.get(role, [])
+
     if not sections:
         return ""
 
@@ -146,11 +132,10 @@ def build_kb_context(role: str) -> str:
         body_lines = [l for l in lines if l.strip() and not re.match(r'^# [^#]', l)]
         if not body_lines or body_lines[0].startswith("（暂无"):
             continue
-
-        preview = "\n".join(body_lines[:15])
-        if len(body_lines) > 15:
+        MAX_PREVIEW = 100 if sec == "schema" else 15
+        preview = "\n".join(body_lines[:MAX_PREVIEW])
+        if len(body_lines) > MAX_PREVIEW:
             preview += f"\n... [共 {len(body_lines)} 行，完整内容见 knowledge/{source}/{sec}.md]"
-
         if source == "curated":
             parts.append(f"[知识库：{sec}]\n{preview}")
         else:

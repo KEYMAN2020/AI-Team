@@ -62,11 +62,10 @@ def emit(event: str, data: dict):
 
 
 def format_sse(event_raw: str) -> str:
-    """将原始事件 payload 格式化为 SSE 协议文本。"""
+    """Format raw event payload as SSE protocol text."""
     try:
         obj = json.loads(event_raw)
-        evt = obj.get("event", "message")
-        dat = json.dumps(obj.get("data", {}), ensure_ascii=False)
-        return f"event: {evt}\ndata: {dat}\n\n"
+        dat = json.dumps(obj, ensure_ascii=False)
+        return "data: " + dat + "\n\n"
     except Exception:
-        return f"data: {event_raw}\n\n"
+        return "data: " + event_raw + "\n\n"

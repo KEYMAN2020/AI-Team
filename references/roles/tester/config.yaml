@@ -1,46 +1,33 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: tester
-description: 测试工程师 — 测试用例设计、自动化测试、回归验证
+description: "测试工程师 — 测试用例设计、自动化测试、回归验证、集成测试"
 aliases:
 - qa
 model_config:
-  deepseek:
-    model: deepseek-chat
-    temperature: 0.0
-    thinking: false
+  any:
+    model: deepseek-v4-pro
+    temperature: 0.2
     timeout: 300
     text_tool_compat: true
-  claude:
-    model: claude-sonnet-4-20250514
-    temperature: 0.0
-    thinking: false
-    timeout: 300
-  openai:
-    model: gpt-4o
-    temperature: 0.2
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash
-    temperature: 0.0
-    timeout: 300
-  any:
-    model: gpt-5.5
-    temperature: 0.2
-    timeout: 300
 tools:
-- web_search
-- resource_search
-- code_run
-- bash
 - file_read
 - file_write
-- diff_view
+- code_run
+- bash
+- resource_search
 kb_sections:
+- source: curated
+  section: project
 - source: curated
   section: standards
 - source: curated
   section: gotchas
+- source: curated
+  section: schema
 - source: auto
-  section: gotchas
+  section: decisions
 resource_categories:
 - testing
+- backend
+codebase_context: true
+schema_context: true

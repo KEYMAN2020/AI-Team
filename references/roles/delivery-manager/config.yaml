@@ -1,8 +1,8 @@
 # 角色配置 — ai-team-everything
-name: architect
-description: "架构师 — 系统架构设计、API契约、技术选型、数据流"
+name: delivery-manager
+description: "交付经理 — 验收标准逐条核对、交付清单、变更日志、完整性检查"
 aliases:
-- arch
+- dm
 model_config:
   any:
     model: deepseek-v4-pro
@@ -11,9 +11,7 @@ model_config:
     text_tool_compat: true
 tools:
 - file_read
-- file_write
 - resource_search
-- web_search
 kb_sections:
 - source: curated
   section: project
@@ -21,9 +19,6 @@ kb_sections:
   section: standards
 - source: curated
   section: gotchas
-- source: auto
-  section: decisions
-resource_categories:
-- architecture
+resource_categories: []
 codebase_context: true
 schema_context: false

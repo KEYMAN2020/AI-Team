@@ -32,6 +32,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - AI_TEAM_BASE_URL=https://api.deepseek.com/v1
+      - AI_TEAM_API_KEY=sk-f2fd426364c947809a7edfddbfe895dc
       # 运行环境
       - APP_ENV=${APP_ENV:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -45,8 +47,16 @@ services:
       # 知识库（curated 由人类维护，auto 由 Agent 生成）
       - ./knowledge/curated:/app/knowledge/curated:ro
       - ai-team-knowledge-auto:/app/knowledge/auto
+      # Dashboard（挂载本地目录以支持热更新）
+      - ./web_dashboard:/app/web_dashboard:ro
+      - ./web_portal:/app/web_portal:ro
+      # 热更新挂载（代码修改后 docker compose restart app 即可生效）
+      - ./server.py:/app/server.py:ro
+      - ./references:/app/references:ro
+      # Codebase snapshot for role context
+      - ./codebase:/app/codebase:rw
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8123/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8123/health')" ]
       interval: 30s
       timeout: 10s
       retries: 3

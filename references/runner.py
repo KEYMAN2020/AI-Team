@@ -239,6 +239,26 @@ async def _call_agent_async(role, task, task_id, upstream_ctx, bus, provider, de
         context = context.rstrip() + "\n\n[技术知识储备]\n" + lib_ctx
 
     # 上下文截断保护（约 6000 tokens，避免超出模型窗口）
+    # codebase context injection for codebase_context=True roles
+    from role_registry import get_role_codebase_context
+    if get_role_codebase_context(role):
+        codebase_dir = Path('/app/codebase')
+        if codebase_dir.exists():
+            files = sorted(codebase_dir.rglob('*'))
+            py_files = [f for f in files if f.suffix == '.py' and f.is_file()]
+            if py_files:
+                preview_lines = []
+                for f in py_files[:15]:
+                    rel = f.relative_to(codebase_dir)
+                    try:
+                        preview_lines.append(f'  {rel} ({len(f.read_text().splitlines())} lines)')
+                    except:
+                        preview_lines.append(f'  {rel}')
+                ctx = '\n'.join(preview_lines)
+                if len(py_files) > 15:
+                    ctx += f'\n  ... ({len(py_files)} .py files total)'
+                context = context.rstrip() + f'\n\n代码仓库快照 - /app/codebase/\n现有 .py 文件：\n{ctx}'
+
     MAX_CTX = _wcfg("max_context_chars", 24000)
     if len(context) > MAX_CTX:
         context = context[:MAX_CTX-50] + "\n... [上下文过长，已截断]"

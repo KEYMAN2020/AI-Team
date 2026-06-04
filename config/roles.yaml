@@ -222,48 +222,53 @@ gemini:
     timeout: 300
 
 any:
+  text_tool_compat: true
+  # 快模型（gpt-5.5）：规划、设计、编码、测试 — 需要快速响应的角色
   pm:
-    model: "gpt-5.4"
+    model: "deepseek-v4-pro"
     temperature: 0.3
-    timeout: 120
-  product:
-    model: "gpt-5.4"
-    temperature: 0.5
-    timeout: 300
-  architect:
-    model: "gpt-5.4"
-    temperature: 0.3
-    timeout: 120
-  ux:
-    model: "gpt-5.4"
-    temperature: 0.7
-    timeout: 300
-  dba:
-    model: "gpt-5.4"
-    temperature: 0.1
-    timeout: 300
-  frontend:
-    model: "gpt-5.4"
-    temperature: 0.2
-    timeout: 300
-  backend:
-    model: "gpt-5.4"
-    temperature: 0.2
-    timeout: 300
+    timeout: 200
     _max_iter: 10
-  reviewer:
-    model: "gpt-5.4"
-    temperature: 0.0
-    timeout: 120
+  product:
+    model: "deepseek-v4-pro"
+    temperature: 0.5
+    timeout: 200
+  ux:
+    model: "deepseek-v4-pro"
+    temperature: 0.7
+    timeout: 200
+  dba:
+    model: "deepseek-v4-pro"
+    temperature: 0.1
+    timeout: 200
+  frontend:
+    model: "deepseek-v4-pro"
+    temperature: 0.2
+    timeout: 200
+  backend:
+    model: "deepseek-v4-pro"
+    temperature: 0.2
+    timeout: 200
+    _max_iter: 10
   devops:
-    model: "gpt-5.4"
+    model: "deepseek-v4-pro"
     temperature: 0.2
-    timeout: 300
+    timeout: 200
   debug:
-    model: "gpt-5.4"
+    model: "deepseek-v4-pro"
     temperature: 0.0
-    timeout: 300
+    timeout: 200
   tester:
-    model: "gpt-5.4"
+    model: "deepseek-v4-pro"
     temperature: 0.2
-    timeout: 300
+    timeout: 200
+
+  # 深模型（gpt-5.5）：架构设计、代码审查 — 需要深度推理的角色
+  architect:
+    model: "deepseek-v4-pro"
+    temperature: 0.3
+    timeout: 200
+  reviewer:
+    model: "deepseek-v4-pro"
+    temperature: 0.0
+    timeout: 200
