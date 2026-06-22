@@ -33,7 +33,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - AI_TEAM_BASE_URL=https://api.deepseek.com/v1
-      - AI_TEAM_API_KEY=sk-f2fd426364c947809a7edfddbfe895dc
+      - AI_TEAM_API_KEY=${AI_TEAM_API_KEY:-}
       # 运行环境
       - APP_ENV=${APP_ENV:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
