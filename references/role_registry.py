@@ -58,7 +58,8 @@ _aliases: Optional[dict] = None    # alias → role_name
 class RoleDefinition:
     """从 config.yaml 解析的角色定义。"""
     __slots__ = ("name", "description", "aliases", "model_config",
-                 "tools", "kb_sections", "resource_categories", "prompt_path")
+                 "tools", "kb_sections", "resource_categories", "prompt_path",
+                 "codebase_context", "schema_context")
 
     def __init__(self, name: str, config: dict, prompt_path: Path):
         self.name = name
@@ -73,6 +74,8 @@ class RoleDefinition:
         ]
         self.resource_categories = config.get("resource_categories", [])
         self.prompt_path = prompt_path
+        self.codebase_context = config.get("codebase_context", False)
+        self.schema_context = config.get("schema_context", False)
 
 
 def scan(force: bool = False) -> dict[str, RoleDefinition]:
@@ -222,6 +225,20 @@ def get_role_resource_cats(role: str) -> list[str]:
     role = resolve_role(role) or role
     rd = _registry.get(role)
     return list(rd.resource_categories) if rd else []
+
+def get_role_codebase_context(role: str) -> bool:
+    """返回角色是否需要代码仓库上下文（codebase_context）。自动解析别名。"""
+    _ensure_scanned()
+    role = resolve_role(role) or role
+    rd = _registry.get(role)
+    return rd.codebase_context if rd else False
+
+def get_role_schema_context(role: str) -> bool:
+    """返回角色是否需要数据库 schema 上下文（schema_context）。自动解析别名。"""
+    _ensure_scanned()
+    role = resolve_role(role) or role
+    rd = _registry.get(role)
+    return rd.schema_context if rd else False
 
 def get_role_prompt(role: str) -> str:
     """

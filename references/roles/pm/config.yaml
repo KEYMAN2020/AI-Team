@@ -1,43 +1,27 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: pm
-description: 项目经理 — 需求分析、任务拆分、DAG规划
+description: "项目经理 — 任务拆分、DAG编排、依赖管理"
 aliases: []
 model_config:
-  deepseek:
-    model: deepseek-chat
+  any:
+    model: deepseek-v4pro
     temperature: 0.3
-    thinking: false
     timeout: 300
     text_tool_compat: true
-  claude:
-    model: claude-opus-4-20250514
-    temperature: 0.3
-    thinking: true
-    budget: 2000
-    timeout: 300
-  openai:
-    model: o1
-    temperature: 1.0
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash-thinking-exp
-    temperature: 0.3
-    timeout: 300
-  any:
-    model: gpt-5.5
-    temperature: 0.3
-    timeout: 300
 tools:
 - web_search
-- resource_search
 - file_read
 - file_write
+- resource_search
 kb_sections:
-- source: auto
-  section: decisions
+- source: curated
+  section: project
+- source: curated
+  section: standards
 - source: curated
   section: gotchas
 - source: auto
-  section: gotchas
-resource_categories:
-- architecture
+  section: decisions
+resource_categories: []
+codebase_context: true
+schema_context: false

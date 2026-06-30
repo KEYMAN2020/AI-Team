@@ -1,39 +1,29 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: product
-description: 产品经理 — 用户故事、验收标准、产品策略
+description: "产品经理 — 用户故事、验收标准、范围控制"
 aliases:
 - po
 model_config:
-  deepseek:
-    model: deepseek-chat
-    temperature: 0.5
-    thinking: false
-    timeout: 300
-    text_tool_compat: true
-  claude:
-    model: claude-sonnet-4-20250514
-    temperature: 0.5
-    thinking: false
-    timeout: 300
-  openai:
-    model: gpt-4o
-    temperature: 0.5
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash
-    temperature: 0.5
-    timeout: 300
   any:
     model: gpt-5.5
-    temperature: 0.5
+    temperature: 0.4
     timeout: 300
+    text_tool_compat: true
 tools:
 - web_search
 - file_read
-- file_write
+- resource_search
 kb_sections:
+- source: curated
+  section: project
+- source: curated
+  section: standards
+- source: curated
+  section: gotchas
 - source: auto
   section: decisions
 - source: curated
   section: glossary
 resource_categories: []
+codebase_context: false
+schema_context: false

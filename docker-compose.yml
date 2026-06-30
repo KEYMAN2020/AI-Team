@@ -28,8 +28,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - AI_TEAM_BASE_URL=https://gsykj.com/v1
-      - AI_TEAM_API_KEY=sk-ed86b4376a8eb071db86400eeaf88297db790967a7860740fc28fedded8be3aa
+      - AI_TEAM_BASE_URL=https://api.deepseek.com/v1
+      - AI_TEAM_API_KEY=sk-f2fd426364c947809a7edfddbfe895dc
       # 杩愯鐜
       - APP_ENV=${APP_ENV:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

@@ -220,50 +220,50 @@ any:
   text_tool_compat: true
   # 蹇ā鍨嬶紙gpt-5.5锛夛細瑙勫垝銆佽璁°€佺紪鐮併€佹祴璇?鈥?闇€瑕佸揩閫熷搷搴旂殑瑙掕壊
   pm:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.3
     timeout: 200
     _max_iter: 10
   product:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.5
     timeout: 200
   ux:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.7
     timeout: 200
   dba:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.1
     timeout: 200
   frontend:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.2
     timeout: 200
   backend:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.2
     timeout: 200
     _max_iter: 10
   devops:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.2
     timeout: 200
   debug:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.0
     timeout: 200
   tester:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.2
     timeout: 200
 
   # 娣辨ā鍨嬶紙gpt-5.5锛夛細鏋舵瀯璁捐銆佷唬鐮佸鏌?鈥?闇€瑕佹繁搴︽帹鐞嗙殑瑙掕壊
   architect:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.3
     timeout: 200
   reviewer:
-    model: "gpt-5.5"
+    model: "deepseek-v4pro"
     temperature: 0.0
     timeout: 200

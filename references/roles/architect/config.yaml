@@ -1,51 +1,29 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: architect
-description: 架构师 — 系统架构设计、技术选型、接口定义
+description: "架构师 — 系统架构设计、API契约、技术选型、数据流"
 aliases:
 - arch
 model_config:
-  deepseek:
-    model: deepseek-chat
-    temperature: 0.3
-    thinking: false
-    timeout: 300
-    text_tool_compat: true
-  claude:
-    model: claude-opus-4-20250514
-    temperature: 0.3
-    thinking: true
-    budget: 2000
-    timeout: 300
-  openai:
-    model: o1
-    temperature: 1.0
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash-thinking-exp
-    temperature: 0.3
-    timeout: 300
   any:
     model: gpt-5.5
-    temperature: 0.3
+    temperature: 0.2
     timeout: 300
+    text_tool_compat: true
 tools:
-- web_search
 - file_read
 - file_write
-- code_run
 - resource_search
-- api_doc_update
+- web_search
 kb_sections:
-- source: auto
-  section: decisions
+- source: curated
+  section: project
 - source: curated
   section: standards
 - source: curated
   section: gotchas
 - source: auto
-  section: gotchas
+  section: decisions
 resource_categories:
 - architecture
-- backend
-- database
-- security
+codebase_context: true
+schema_context: false

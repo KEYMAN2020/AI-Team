@@ -494,6 +494,12 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
         event_bus.emit("project_initialized", {"project_name": project_name, "task": task_desc[:120]})
 
         # 杩愯 DAG
+
+        # ---- codebase_snapshot ----
+        try:
+            _ensure_codebase_snapshot(task_desc)
+        except Exception as e:
+            print(f"  [codebase_snapshot] warning: clone failed ({e}), continuing")
         result = asyncio.run(run_project(task_desc, provider=provider))
 
         # 鏇存柊浠诲姟鐘舵€?        _set_task(task_id, {
@@ -529,6 +535,42 @@ def _run_async_task(task_id: str, task_desc: str, project_name: str,
     finally:
         with _project_lock:
             _project_running = False
+
+
+
+def _ensure_codebase_snapshot(task_desc: str) -> None:
+    """Clone existing codebase so roles can read existing code.
+    
+    Looks for codebase_snapshot hint in task description (set by PM role).
+    Clones into /app/codebase/ for in-container access.
+    """
+    import subprocess, os
+    from pathlib import Path
+    
+    # Only run if task mentions codebase_snapshot
+    if 'codebase_snapshot' not in task_desc and 'codebase' not in task_desc:
+        return
+    
+    target = Path('/app/codebase')
+    repo = 'https://github.com/KEYMAN2020/BeEnjoyIng.git'
+    branch = '2026_0602_dev'
+    
+    # Skip if already cloned and has content
+    if target.exists() and list(target.iterdir()):
+        print(f'  [codebase_snapshot] codebase already exists at {target}, skipping clone')
+        return
+    
+    target.mkdir(parents=True, exist_ok=True)
+    print(f'  [codebase_snapshot] cloning {repo} branch={branch} into {target}...')
+    result = subprocess.run(
+        ['git', 'clone', '--depth', '1', '-b', branch, repo, str(target)],
+        capture_output=True, text=True, timeout=120
+    )
+    if result.returncode == 0:
+        print(f'  [codebase_snapshot] clone OK ({len(list(target.rglob("*")))} files)')
+    else:
+        print(f'  [codebase_snapshot] clone failed: {result.stderr[:200]}')
+        raise RuntimeError(f'git clone failed: {result.stderr[:200]}')
 
 
 def _call_webhook(url: str, task_id: str, status: str, error: str = ""):

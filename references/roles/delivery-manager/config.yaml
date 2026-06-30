@@ -1,8 +1,8 @@
 # 角色配置 — ai-team-everything
-name: tester
-description: "测试工程师 — 测试用例设计、自动化测试、回归验证、集成测试"
+name: delivery-manager
+description: "交付经理 — 验收标准逐条核对、交付清单、变更日志、完整性检查"
 aliases:
-- qa
+- dm
 model_config:
   any:
     model: gpt-5.5
@@ -11,9 +11,6 @@ model_config:
     text_tool_compat: true
 tools:
 - file_read
-- file_write
-- code_run
-- bash
 - resource_search
 kb_sections:
 - source: curated
@@ -22,12 +19,6 @@ kb_sections:
   section: standards
 - source: curated
   section: gotchas
-- source: curated
-  section: schema
-- source: auto
-  section: decisions
-resource_categories:
-- testing
-- backend
+resource_categories: []
 codebase_context: true
-schema_context: true
+schema_context: false

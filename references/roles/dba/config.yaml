@@ -1,45 +1,30 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: dba
-description: 数据库管理员 — Schema设计、SQL优化、数据建模
+description: "数据库管理员 — Schema设计、Migration脚本、查询优化、现有表结构管理"
 aliases: []
 model_config:
-  deepseek:
-    model: deepseek-chat
-    temperature: 0.1
-    thinking: false
-    timeout: 300
-    text_tool_compat: true
-  claude:
-    model: claude-opus-4-20250514
-    temperature: 0.1
-    thinking: true
-    budget: 1500
-    timeout: 300
-  openai:
-    model: gpt-4o
-    temperature: 0.1
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash-thinking-exp
-    temperature: 0.1
-    timeout: 300
   any:
     model: gpt-5.5
     temperature: 0.1
     timeout: 300
+    text_tool_compat: true
 tools:
-- code_run
-- bash
 - file_read
 - file_write
-- web_search
+- bash
 - resource_search
 kb_sections:
-- source: auto
-  section: decisions
+- source: curated
+  section: project
+- source: curated
+  section: standards
 - source: curated
   section: gotchas
+- source: curated
+  section: schema
 - source: auto
-  section: gotchas
+  section: decisions
 resource_categories:
 - database
+codebase_context: false
+schema_context: true

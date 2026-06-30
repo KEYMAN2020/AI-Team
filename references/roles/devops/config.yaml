@@ -1,46 +1,28 @@
-# 角色配置 — 自动生成
+# 角色配置 — ai-team-everything
 name: devops
-description: DevOps — CI/CD、容器化部署、基础设施即代码
+description: "DevOps — CI/CD、容器化部署、基础设施即代码"
 aliases:
 - ops
 model_config:
-  deepseek:
-    model: deepseek-chat
-    temperature: 0.0
-    thinking: false
-    timeout: 300
-    text_tool_compat: true
-  claude:
-    model: claude-sonnet-4-20250514
-    temperature: 0.0
-    thinking: false
-    timeout: 300
-  openai:
-    model: gpt-4o
-    temperature: 0.2
-    timeout: 300
-  gemini:
-    model: gemini-2.0-flash
-    temperature: 0.0
-    timeout: 300
   any:
     model: gpt-5.5
     temperature: 0.2
     timeout: 300
+    text_tool_compat: true
 tools:
-- bash
 - file_read
 - file_write
-- web_search
-- code_run
+- bash
 - resource_search
 kb_sections:
-- source: auto
-  section: decisions
 - source: curated
-  section: gotchas
-- source: auto
+  section: project
+- source: curated
+  section: standards
+- source: curated
   section: gotchas
 resource_categories:
 - devops
 - security
+codebase_context: true
+schema_context: false
